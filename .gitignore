@@ -1,0 +1,70 @@
+# =====================================================
+# ASHA Voice - .gitignore
+# =====================================================
+
+# ---- SECRETS (NEVER COMMIT) ----
+backend/.env
+*.env
+!backend/.env.example
+!frontend/.env.example
+
+# ---- Python / Django ----
+backend/venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.pyc
+backend/**/*.pyo
+backend/*.log
+backend/asha_voice.log
+backend/staticfiles/
+backend/media/
+backend/.pytest_cache/
+backend/dist/
+*.egg-info/
+
+# ---- Node / React ----
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# ---- OS / Editor ----
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# ---- Temp / Scratch ----
+backend/check_groq.py
+backend/management/
+*.tmp
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+.pytest_cache/
+
+# Django
+db.sqlite3
+staticfiles/
+media/
+
+# Node
+node_modules/
+dist/
+build/
+
+# IDE and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
