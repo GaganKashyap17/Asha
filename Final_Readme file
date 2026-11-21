@@ -1,0 +1,163 @@
+ASHA Voice – Clinical Safety Guardrails & Data Ethics
+
+1. Track-Specific Guardrails
+
+ASHA Voice is designed as a voice-first digital field register and beneficiary follow-up assistant for ASHA workers.
+
+The machine learning component is an experimental beneficiary risk-prioritisation feature. Its reference criteria are based on publicly available Indian maternal and newborn healthcare guidelines and ASHA training materials.
+
+The following guardrails apply to the prototype:
+
+- Synthetic data only: All beneficiary records used for development, training, testing and demonstration are synthetic.
+- No real patient information: No personally identifiable information or real beneficiary medical records are used in the demonstration dataset.
+- Guideline-based indicators: The danger-sign reference list is prepared using publicly available government healthcare guidelines.
+- Decision-support only: ML predictions are intended to assist prioritisation, not replace clinical assessment or professional judgement.
+- No autonomous diagnosis: ASHA Voice does not diagnose diseases, prescribe medicines or determine clinical treatment.
+- Referral awareness: Danger signs identified in the reference guidelines should be treated as indicators requiring appropriate attention and referral according to established health protocols.
+- Insufficient information: Missing or incomplete beneficiary information must not be interpreted as an indication that the beneficiary is healthy.
+- Human oversight: ASHA workers and qualified healthcare professionals remain responsible for decisions and actions.
+
+2. Public Health Reference and Danger-Sign List
+
+The danger-sign reference list was developed using the following public health documents:
+
+A. ASHA Training Module 6 – Simple Skills That Save Lives
+
+Published under the National Rural Health Mission (NRHM).
+
+Official document:
+https://nhm.gov.in/images/pdf/communitisation/asha/book-no-6.pdf
+
+Relevant sections:
+
+- Part B – Maternal Health.
+- Chapter 4: Identifying Complications During Pregnancy and Delivery (pages 30–33).
+- Part C – Newborn Health.
+- Chapter 3: Examining the Newborn at Birth.
+- Chapter 6: Management of Fever in Newborn.
+
+B. Relevant Annexures of ASHA Module 6
+
+The following annexures provide supporting information about beneficiary assessment and field follow-up:
+
+- Annexe 3: Format for Individual Plans (Birth Preparedness).
+- Annexe 4: Delivery Form, including maternal emergency indicators.
+- Annexe 5: First Examination of the Newborn.
+- Annexe 6: Maternal Home Visit Form.
+- Annexe 7: Newborn Home Visit Form.
+- Annexes 8 and 9: Related newborn assessment and skills checklists.
+
+These annexures provide reference fields and observations relevant to maternal and newborn health monitoring.
+
+C. Skilled Birth Attendance (SBA) Guidelines
+
+Ministry of Health and Family Welfare, Government of India.
+
+Official document:
+https://nhm.gov.in/images/pdf/programmes/maternal-health/guidelines/sba_guidelines_for_skilled_attendance_at_birth.pdf
+
+Reference areas include maternal danger signs, complications during pregnancy and childbirth, and the need for timely referral.
+
+D. Revised Mother and Child Protection (MCP) Card
+
+Government of India – National Health Mission.
+
+Official document:
+https://www.nhm.gov.in/New_Updates_2018/NHM_Components/Immunization/Guildelines_for_immunization/MCP_Card_English_version.pdf
+
+Reference areas include maternal danger signs during pregnancy and childbirth and guidance on seeking immediate healthcare.
+
+3. Danger Signs Covered by the Reference List
+
+The following are examples of danger signs identified in the referenced public health materials.
+
+Maternal Health – Pregnancy
+
+- Vaginal bleeding during pregnancy.
+- Absence of foetal movement.
+- Severe abdominal pain.
+- Severe headache or blurred vision.
+- Swelling of the face and hands.
+- Convulsions or fits.
+- High fever.
+- Severe anaemia or breathlessness.
+
+Labour and Delivery
+
+- Excessive or fresh bleeding.
+- Abnormal baby presentation, including sideways position.
+- Prolonged labour.
+- Fever during labour.
+- Convulsions.
+- Retained placenta.
+- Green or brown amniotic fluid.
+
+Newborn Health
+
+- Fever or abnormally low body temperature.
+- Poor or absent feeding.
+- Weak or absent crying.
+- Limp limbs or reduced movement.
+- Breathing difficulties.
+- Other concerning observations identified during newborn assessment.
+
+This is a prototype reference list, not an exhaustive clinical checklist. The applicable guideline and healthcare professional's assessment take precedence.
+
+4. Synthetic Dataset and Machine Learning
+
+ASHA Voice uses a demonstration dataset containing entirely synthetic beneficiary information.
+
+The dataset was prepared using health indicators and reference criteria informed by the documents listed above.
+
+The prototype uses a Random Forest classification model to categorise beneficiary records into four prioritisation categories:
+
+1. Emergency
+2. Needs Attention
+3. Routine
+4. Insufficient Information
+
+The model is intended to demonstrate how beneficiary information can support prioritisation of ASHA field visits.
+
+Important limitations:
+
+- The model is trained on demonstration data, not a representative clinical dataset.
+- Its predictions have not been clinically validated.
+- Its output must not be interpreted as a medical diagnosis or a clinically established risk score.
+- Its performance on synthetic data does not establish real-world healthcare effectiveness.
+
+5. Data Privacy and Ethical Considerations
+
+ASHA Voice follows these principles in its demonstration environment:
+
+- No real beneficiary records are required for the ML demonstration.
+- Synthetic names and health information are used.
+- No actual patient identity should be included in screenshots, sample datasets or demonstration materials.
+- Health information should be handled with appropriate access restrictions and security controls in any future deployment.
+- Any future use with real beneficiaries requires appropriate privacy safeguards, authorisation and validation.
+
+6. Disclaimer
+
+ASHA Voice is a hackathon prototype developed for demonstrating voice-based documentation, beneficiary record management and ML-assisted prioritisation.
+
+It is not a certified medical device, diagnostic system or substitute for trained healthcare professionals.
+
+All machine learning outputs are experimental and intended solely for demonstration and decision-support research.
+
+7. References
+
+1. National Rural Health Mission. ASHA Module 6 – Simple Skills That Save Lives. Government of India.
+   https://nhm.gov.in/images/pdf/communitisation/asha/book-no-6.pdf
+
+2. Ministry of Health and Family Welfare. SBA Guidelines for Skilled Attendance at Birth. Government of India.
+   https://nhm.gov.in/images/pdf/programmes/maternal-health/guidelines/sba_guidelines_for_skilled_attendance_at_birth.pdf
+
+3. National Health Mission. Revised Mother and Child Protection Card – English Version. Government of India.
+   https://www.nhm.gov.in/New_Updates_2018/NHM_Components/Immunization/Guildelines_for_immunization/MCP_Card_English_version.pdf
+
+---
+
+Project: ASHA Voice
+ML Algorithm: Random Forest
+Dataset: Synthetic demonstration dataset
+Purpose: Beneficiary risk prioritisation and field-work support
+Clinical Status: Experimental prototype – Not clinically validated
