@@ -10,7 +10,6 @@ const NAV = [
   { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { path: '/register', icon: UserPlus, label: 'New Registration' },
   { path: '/revisit', icon: Stethoscope, label: 'Patient Revisit' },
-  { path: '/voice', icon: Mic, label: 'Voice Register' },
   { path: '/beneficiaries', icon: Users, label: 'Beneficiaries' },
   { path: '/visits', icon: ClipboardList, label: 'Visit History' },
   { path: '/followups', icon: Calendar, label: 'Follow-ups' },

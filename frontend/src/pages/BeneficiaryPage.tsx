@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Users, Search, Plus, Eye, Calendar, Baby, Edit3, Trash2,
-  X, AlertTriangle, CheckCircle2, Loader2, Phone, MapPin, Home, Mic
+  X, AlertTriangle, CheckCircle2, Loader2, Phone, Mic
 } from 'lucide-react'
 import { beneficiaryAPI } from '../services/api'
 
@@ -194,8 +194,10 @@ export default function BeneficiaryPage() {
       setSuccessMsg(`Beneficiary ${newBene.name} (${newBene.beneficiary_id}) registered successfully!`)
       setTimeout(() => setSuccessMsg(''), 4000)
     } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { error?: string } } }
-      setFormError(axiosErr?.response?.data?.error || 'Failed to register beneficiary. Please check your data.')
+      const axiosErr = err as { response?: { data?: { error?: string; validation_errors?: string[]; missing_mandatory?: string[] } } }
+      const d = axiosErr?.response?.data
+      const msg = d?.validation_errors?.join('; ') || (d?.missing_mandatory?.length ? `Missing: ${d.missing_mandatory.join(', ')}` : null) || d?.error || 'Failed to register beneficiary. Please check your data.'
+      setFormError(msg)
     } finally {
       setFormSubmitting(false)
     }

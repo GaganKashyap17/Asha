@@ -240,6 +240,72 @@ def extract_float_value(val: Any) -> Optional[float]:
     return None
 
 
+def normalize_and_find_beneficiary(raw_id: str, raw_name: str = "") -> Optional[dict]:
+    """
+    Finds a beneficiary in MongoDB using flexible, intelligent matching:
+    1. Exact ID (case-insensitive)
+    2. Zero-padded / unpadded ID (e.g. 'PREG-00004', 'PREG-4', 'PREG 004' -> 'PREG-000004')
+    3. Exact Name match (case-insensitive)
+    4. Substring / partial ID or Name match
+    """
+    clean_id = str(raw_id or "").strip()
+    clean_name = str(raw_name or "").strip()
+    if not clean_id and not clean_name:
+        return None
+
+    # 1. Exact ID match
+    if clean_id:
+        b = mongodb_service.find_one("beneficiaries", {
+            "beneficiary_id": clean_id.upper(),
+            "is_deleted": {"$ne": True}
+        })
+        if b:
+            return b
+
+        # 2. Normalized prefix + number regex match
+        m = re.search(r"^([A-Za-z]+)[-_ ]*(?:\d{4}[-_ ])?0*(\d+)$", clean_id)
+        if m:
+            prefix = m.group(1).upper()
+            num = int(m.group(2))
+            pattern = rf"^{re.escape(prefix)}[-_ ]*(?:\d{{4}}[-_ ])?0*{num}$"
+            b = mongodb_service.find_one("beneficiaries", {
+                "beneficiary_id": {"$regex": pattern, "$options": "i"},
+                "is_deleted": {"$ne": True}
+            })
+            if b:
+                return b
+
+            # In-memory scan fallback
+            all_b = mongodb_service.find_all("beneficiaries", {"is_deleted": {"$ne": True}})
+            for cand in all_b:
+                cid = str(cand.get("beneficiary_id") or "").upper()
+                cm = re.search(r"^([A-Za-z]+)[-_ ]*(?:\d{4}[-_ ])?0*(\d+)$", cid)
+                if cm and cm.group(1) == prefix and int(cm.group(2)) == num:
+                    return cand
+
+    # 3. Exact Name match
+    if clean_name:
+        b = mongodb_service.find_one("beneficiaries", {
+            "name": {"$regex": f"^{re.escape(clean_name)}$", "$options": "i"},
+            "is_deleted": {"$ne": True}
+        })
+        if b:
+            return b
+
+    # 4. Partial Name or ID match
+    search_term = clean_name or clean_id
+    if search_term and len(search_term) >= 3:
+        all_b = mongodb_service.find_all("beneficiaries", {"is_deleted": {"$ne": True}})
+        st_low = search_term.lower()
+        for cand in all_b:
+            cname = str(cand.get("name") or "").lower()
+            cid = str(cand.get("beneficiary_id") or "").upper()
+            if st_low in cname or search_term.upper() in cid:
+                return cand
+
+    return None
+
+
 def validate_beneficiary_data(
     category: str,
     data: Dict[str, Any],
@@ -459,16 +525,19 @@ def validate_beneficiary_data(
             if mother_id:
                 sanitized["mother_beneficiary_id"] = mother_id
                 if check_mother_exists:
-                    mother = mongodb_service.find_one("beneficiaries", {
-                        "beneficiary_id": mother_id,
-                        "is_deleted": {"$ne": True}
-                    })
-                    if not mother:
-                        errors.append(f"Mother's Beneficiary ID '{mother_id}' does not exist in the database.")
-                    elif not mother_name:
-                        sanitized["mother_name"] = mother.get("name", "")
-
-            if mother_name:
+                    mother = normalize_and_find_beneficiary(mother_id, mother_name)
+                    if mother:
+                        sanitized["mother_beneficiary_id"] = mother.get("beneficiary_id", mother_id)
+                        if not mother_name:
+                            sanitized["mother_name"] = mother.get("name", "")
+                    else:
+                        if mother_name:
+                            inconsistencies.append(
+                                f"Mother ID '{mother_id}' was not found in the database; registered with mother name '{mother_name}'."
+                            )
+                        else:
+                            errors.append(f"Mother's Beneficiary ID '{mother_id}' does not exist in the database.")
+            if mother_name and not sanitized.get("mother_name"):
                 sanitized["mother_name"] = mother_name
 
         # Place of delivery
@@ -530,15 +599,19 @@ def validate_beneficiary_data(
             if mother_id:
                 sanitized["mother_beneficiary_id"] = mother_id
                 if check_mother_exists:
-                    mother = mongodb_service.find_one("beneficiaries", {
-                        "beneficiary_id": mother_id,
-                        "is_deleted": {"$ne": True}
-                    })
-                    if not mother:
-                        errors.append(f"Mother's Beneficiary ID '{mother_id}' does not exist in the database.")
-                    elif not mother_name:
-                        sanitized["mother_name"] = mother.get("name", "")
-            if mother_name:
+                    mother = normalize_and_find_beneficiary(mother_id, mother_name)
+                    if mother:
+                        sanitized["mother_beneficiary_id"] = mother.get("beneficiary_id", mother_id)
+                        if not mother_name:
+                            sanitized["mother_name"] = mother.get("name", "")
+                    else:
+                        if mother_name:
+                            inconsistencies.append(
+                                f"Mother ID '{mother_id}' was not found in the database; registered with mother name '{mother_name}'."
+                            )
+                        else:
+                            errors.append(f"Mother's Beneficiary ID '{mother_id}' does not exist in the database.")
+            if mother_name and not sanitized.get("mother_name"):
                 sanitized["mother_name"] = mother_name
 
         # Immunization card status

@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import LandingPage from './pages/LandingPage'
 import LoginPage from './pages/LoginPage'
+import SignupPage from './pages/SignupPage'
 import DashboardPage from './pages/DashboardPage'
 import VoiceRegisterPage from './pages/VoiceRegisterPage'
 import BeneficiaryRegisterPage from './pages/BeneficiaryRegisterPage'
@@ -25,6 +26,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/signup" element={<SignupPage />} />
           <Route path="/dashboard" element={<PrivateRoute><Layout><DashboardPage /></Layout></PrivateRoute>} />
           <Route path="/voice" element={<PrivateRoute><Layout><VoiceRegisterPage /></Layout></PrivateRoute>} />
           <Route path="/register" element={<PrivateRoute><Layout><BeneficiaryRegisterPage /></Layout></PrivateRoute>} />

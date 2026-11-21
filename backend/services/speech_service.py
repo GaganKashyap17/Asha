@@ -5,6 +5,10 @@ import os
 import tempfile
 import logging
 from typing import Union
+from dotenv import load_dotenv
+
+# Ensure environment variables are loaded
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +35,9 @@ class SpeechService:
         Returns:
             dict with 'transcript', 'language', 'provider', 'error'
         """
+        if not self._api_key:
+            self._api_key = os.environ.get('GROQ_API_KEY', '')
+
         if not self._api_key or self._api_key == 'your_groq_api_key_here':
             return {
                 "transcript": "",
@@ -42,9 +49,14 @@ class SpeechService:
         from groq import Groq
         client = Groq(api_key=self._api_key)
 
-        # Write to temp file
+        # Detect audio container format
         suffix = '.webm'
-        if hasattr(audio_file, 'name'):
+        if isinstance(audio_file, (bytes, bytearray)):
+            if audio_file.startswith(b'RIFF'):
+                suffix = '.wav'
+            elif audio_file.startswith(b'OggS'):
+                suffix = '.ogg'
+        elif hasattr(audio_file, 'name'):
             ext = os.path.splitext(audio_file.name)[-1]
             if ext:
                 suffix = ext
@@ -52,6 +64,8 @@ class SpeechService:
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             if hasattr(audio_file, 'read'):
                 tmp.write(audio_file.read())
+                if hasattr(audio_file, 'seek'):
+                    audio_file.seek(0)
             else:
                 tmp.write(audio_file)
             tmp_path = tmp.name
@@ -72,7 +86,7 @@ class SpeechService:
             }
         except Exception as e:
             error_msg = self._redact(str(e))
-            logger.error(f"Transcription failed: {type(e).__name__}")
+            logger.error(f"Transcription failed: {type(e).__name__} - {error_msg}")
             return {
                 "transcript": "",
                 "language": language,

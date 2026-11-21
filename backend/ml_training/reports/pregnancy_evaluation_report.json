@@ -1,0 +1,63 @@
+{
+  "dataset": "pregnancy",
+  "train_samples": 303,
+  "test_samples": 91,
+  "train_beneficiaries": 181,
+  "test_beneficiaries": 46,
+  "accuracy": 0.9451,
+  "precision": 1.0,
+  "recall_sensitivity": 0.8837,
+  "specificity": 1.0,
+  "f1_score": 0.9383,
+  "confusion_matrix": {
+    "true_negatives": 48,
+    "false_positives": 0,
+    "false_negatives": 5,
+    "true_positives": 38
+  },
+  "false_negative_count": 5,
+  "false_positive_count": 0,
+  "classification_report": "                       precision    recall  f1-score   support\n\nStandard/Low Risk (0)       0.91      1.00      0.95        48\n Clinical Concern (1)       1.00      0.88      0.94        43\n\n             accuracy                           0.95        91\n            macro avg       0.95      0.94      0.94        91\n         weighted avg       0.95      0.95      0.94        91\n",
+  "top_10_features": [
+    {
+      "feature": "Haemoglobin_g_dL",
+      "importance": 0.1495
+    },
+    {
+      "feature": "Fetal_Movement_Absent",
+      "importance": 0.1017
+    },
+    {
+      "feature": "Diastolic_BP_mmHg",
+      "importance": 0.0857
+    },
+    {
+      "feature": "BP_Repeat_Status_Not Required",
+      "importance": 0.0835
+    },
+    {
+      "feature": "Blood_Sugar_mg_dL",
+      "importance": 0.0695
+    },
+    {
+      "feature": "Vaginal_Bleeding_No",
+      "importance": 0.0603
+    },
+    {
+      "feature": "Systolic_BP_mmHg",
+      "importance": 0.0536
+    },
+    {
+      "feature": "Vaginal_Bleeding_Yes",
+      "importance": 0.0514
+    },
+    {
+      "feature": "BP_Reading_Interval_Min_is_missing",
+      "importance": 0.0474
+    },
+    {
+      "feature": "BP_Repeat_Status_Confirmed Repeat",
+      "importance": 0.0473
+    }
+  ]
+}

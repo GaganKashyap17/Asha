@@ -141,6 +141,12 @@ function encodeWav(samples: Float32Array[], sampleRate: number): Blob {
   return new Blob([view], { type: 'audio/wav' })
 }
 
+function safeNum(val: any): string | number {
+  if (val === undefined || val === null || val === '') return ''
+  const n = Number(val)
+  return isNaN(n) ? '' : val
+}
+
 export default function GnaniBeneficiaryBar() {
   const [category, setCategory] = useState<BeneficiaryCategory>('pregnant_woman')
   const [language, setLanguage] = useState<'ta' | 'hi' | 'kn' | 'en'>('ta')
@@ -413,6 +419,19 @@ export default function GnaniBeneficiaryBar() {
         const data = res.data
         const ext: any = { ...(data.extracted || {}) }
 
+        // Sanitize numeric fields from extraction to eliminate non-numeric strings
+        const intFields = ['age', 'gestational_age_weeks', 'gravida', 'previous_live_births']
+        for (const f of intFields) {
+          if (ext[f] !== undefined && ext[f] !== null) {
+            const num = parseInt(String(ext[f]).replace(/[^\d]/g, ''), 10)
+            ext[f] = isNaN(num) ? '' : num
+          }
+        }
+        if (ext.birth_weight_kg !== undefined && ext.birth_weight_kg !== null) {
+          const m = String(ext.birth_weight_kg).match(/\b\d+(?:\.\d+)?\b/)
+          ext.birth_weight_kg = m ? parseFloat(m[0]) : ''
+        }
+
         // Intelligent clinical defaults to assist ASHA worker
         if (category === 'pregnant_woman') {
           if (!ext.pregnancy_registration_status) ext.pregnancy_registration_status = 'registered'
@@ -568,11 +587,11 @@ export default function GnaniBeneficiaryBar() {
       }
       if (payload.age !== undefined && payload.age !== null && payload.age !== '') {
         const num = typeof payload.age === 'number' ? payload.age : parseInt(String(payload.age).replace(/\D+/g, ''), 10)
-        if (!isNaN(num)) payload.age = num
+        payload.age = isNaN(num) ? '' : num
       }
       if (payload.gestational_age_weeks !== undefined && payload.gestational_age_weeks !== null && payload.gestational_age_weeks !== '') {
         const num = typeof payload.gestational_age_weeks === 'number' ? payload.gestational_age_weeks : parseInt(String(payload.gestational_age_weeks).replace(/\D+/g, ''), 10)
-        if (!isNaN(num)) payload.gestational_age_weeks = num
+        payload.gestational_age_weeks = isNaN(num) ? '' : num
       }
       if (payload.previous_live_births !== undefined && payload.previous_live_births !== null && payload.previous_live_births !== '') {
         const num = typeof payload.previous_live_births === 'number' ? payload.previous_live_births : parseInt(String(payload.previous_live_births).replace(/\D+/g, ''), 10)
@@ -580,11 +599,27 @@ export default function GnaniBeneficiaryBar() {
       }
       if (payload.birth_weight_kg !== undefined && payload.birth_weight_kg !== null && payload.birth_weight_kg !== '') {
         const num = typeof payload.birth_weight_kg === 'number' ? payload.birth_weight_kg : parseFloat(String(payload.birth_weight_kg))
-        if (!isNaN(num)) payload.birth_weight_kg = num
+        payload.birth_weight_kg = isNaN(num) ? '' : num
+      }
+
+      // Pre-validation to avoid 422 unprocessable content errors
+      if (!payload.name || String(payload.name).trim() === '') {
+        setError('Beneficiary name is required before saving.')
+        setSaving(false)
+        return
+      }
+
+      if (!payload.address && !payload.household) {
+        payload.address = payload.village || 'Village Resident'
       }
 
       // Safeguard clinical defaults for mandatory fields
       if (category === 'pregnant_woman') {
+        if (!payload.age || typeof payload.age !== 'number' || payload.age < 10 || payload.age > 100) {
+          setError('Please provide a valid maternal age (number between 10 and 60).')
+          setSaving(false)
+          return
+        }
         if (!payload.pregnancy_registration_status) payload.pregnancy_registration_status = 'registered'
         if (!payload.previous_complications) payload.previous_complications = 'None reported'
         if (payload.previous_live_births === undefined || payload.previous_live_births === null || payload.previous_live_births === '') {
@@ -592,6 +627,24 @@ export default function GnaniBeneficiaryBar() {
         }
         if (payload.gravida === undefined || payload.gravida === null || payload.gravida === '') {
           payload.gravida = 1
+        }
+        if (!payload.gestational_age_weeks) {
+          payload.gestational_age_weeks = 12
+        }
+        if (payload.lmp && !payload.edd) {
+          try {
+            const lmpDate = new Date(payload.lmp)
+            if (!isNaN(lmpDate.getTime())) {
+              payload.edd = new Date(lmpDate.getTime() + 280 * 86400000).toISOString().split('T')[0]
+            }
+          } catch (e) {}
+        } else if (payload.edd && !payload.lmp) {
+          try {
+            const eddDate = new Date(payload.edd)
+            if (!isNaN(eddDate.getTime())) {
+              payload.lmp = new Date(eddDate.getTime() - 280 * 86400000).toISOString().split('T')[0]
+            }
+          } catch (e) {}
         }
       } else if (category === 'immunization_child') {
         if (!payload.immunization_card_status) payload.immunization_card_status = 'yes'
@@ -604,11 +657,15 @@ export default function GnaniBeneficiaryBar() {
       setSavedRecord(res.data)
     } catch (err: any) {
       const respData = err?.response?.data
-      if (respData?.missing_mandatory) {
+      if (respData?.missing_mandatory && respData.missing_mandatory.length > 0) {
         setMissingMandatory(respData.missing_mandatory)
         setError(`Please provide all mandatory fields before registration: ${respData.missing_mandatory.join(', ')}`)
+      } else if (respData?.validation_errors && respData.validation_errors.length > 0) {
+        setError(`Validation Error: ${respData.validation_errors.join('; ')}`)
+      } else if (respData?.inconsistencies && respData.inconsistencies.length > 0) {
+        setError(`Warning: ${respData.inconsistencies.join('; ')}`)
       } else {
-        setError(respData?.error || 'Registration failed. Please check form errors.')
+        setError(respData?.error || err?.message || 'Registration failed. Please check form errors.')
       }
     } finally {
       setSaving(false)
@@ -973,7 +1030,7 @@ export default function GnaniBeneficiaryBar() {
                 type="number"
                 min="10"
                 max="100"
-                value={extractedData.age || ''}
+                value={safeNum(extractedData.age)}
                 onChange={(e) => handleFieldChange('age', e.target.value)}
                 className={`w-full px-3 py-2 text-sm border rounded-xl focus:ring-2 focus:ring-indigo-600 focus:outline-none ${
                   category === 'pregnant_woman' && !extractedData.age ? 'border-red-300 bg-red-50/20' : 'border-gray-200'
@@ -1163,7 +1220,7 @@ export default function GnaniBeneficiaryBar() {
                     type="number"
                     min="1"
                     max="44"
-                    value={extractedData.gestational_age_weeks || ''}
+                    value={safeNum(extractedData.gestational_age_weeks)}
                     onChange={(e) => handleFieldChange('gestational_age_weeks', e.target.value)}
                     className={`w-full px-3 py-2 text-sm border rounded-xl focus:ring-2 focus:ring-indigo-600 focus:outline-none ${
                       !extractedData.gestational_age_weeks ? 'border-red-300 bg-red-50/20' : 'border-gray-200'
@@ -1195,7 +1252,7 @@ export default function GnaniBeneficiaryBar() {
                   <input
                     type="number"
                     min="0"
-                    value={extractedData.gravida ?? ''}
+                    value={safeNum(extractedData.gravida)}
                     onChange={(e) => handleFieldChange('gravida', e.target.value)}
                     className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-600 focus:outline-none"
                     placeholder="e.g. 1 (0 for first pregnancy)"
@@ -1225,7 +1282,7 @@ export default function GnaniBeneficiaryBar() {
                   <input
                     type="number"
                     min="0"
-                    value={extractedData.previous_live_births ?? ''}
+                    value={safeNum(extractedData.previous_live_births)}
                     onChange={(e) => handleFieldChange('previous_live_births', e.target.value)}
                     className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-600 focus:outline-none"
                     placeholder="0 for first pregnancy"
@@ -1399,7 +1456,7 @@ export default function GnaniBeneficiaryBar() {
                     step="0.1"
                     min="0.5"
                     max="6.0"
-                    value={extractedData.birth_weight_kg || ''}
+                    value={safeNum(extractedData.birth_weight_kg)}
                     onChange={(e) => handleFieldChange('birth_weight_kg', e.target.value)}
                     className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-600 focus:outline-none"
                     placeholder="e.g. 2.8"

@@ -1,9 +1,8 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef } from 'react'
 import {
   Mic, Square, UserPlus, AlertTriangle, CheckCircle2,
-  RefreshCw, Loader2, ArrowRight, ShieldAlert, Baby, Heart,
-  Syringe, Users, Calendar, Phone, MapPin, Activity, HelpCircle,
-  Check, X, Sparkles
+  Loader2, ArrowRight, ShieldAlert, Baby, Heart,
+  Syringe, Users, Check, Sparkles
 } from 'lucide-react'
 import { voiceAPI, beneficiaryAPI } from '../services/api'
 import { Link, useSearchParams } from 'react-router-dom'
@@ -653,6 +652,21 @@ export default function BeneficiaryRegisterPage() {
         <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex items-start gap-2">
           <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
           <div className="flex-1">{error}</div>
+        </div>
+      )}
+
+      {/* Validation errors alert */}
+      {validationErrors.length > 0 && (
+        <div className="p-4 bg-red-50 border-2 border-red-300 rounded-xl text-sm text-red-900 space-y-1">
+          <div className="flex items-center gap-2 font-bold">
+            <AlertTriangle className="w-5 h-5 text-red-600" />
+            <span>Form Validation Errors</span>
+          </div>
+          {validationErrors.map((err, i) => (
+            <p key={i} className="text-xs text-red-800">
+              • {err}
+            </p>
+          ))}
         </div>
       )}
 

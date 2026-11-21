@@ -67,9 +67,31 @@ def test_single_field_extraction_regex():
 
     res_vb = groq_service.extract_single_visit_field("no vaginal bleeding", "vaginal_bleeding", "pregnant_woman")
     assert res_vb["value"] == "No"
+    res_vb_spot = groq_service.extract_single_visit_field("mild spotting reported", "vaginal_bleeding", "pregnant_woman")
+    assert res_vb_spot["value"] == "Spotting"
+    res_vb_yes = groq_service.extract_single_visit_field("heavy vaginal bleeding present", "vaginal_bleeding", "pregnant_woman")
+    assert res_vb_yes["value"] == "Yes"
+
+    res_hd_no = groq_service.extract_single_visit_field("no severe headache or blurred vision", "severe_headache_blurred_vision", "pregnant_woman")
+    assert res_hd_no["value"] == "No"
+    res_hd_yes = groq_service.extract_single_visit_field("complaining of severe headache and blurred vision", "severe_headache_blurred_vision", "pregnant_woman")
+    assert res_hd_yes["value"] == "Yes"
+    res_hd_mild = groq_service.extract_single_visit_field("only mild headache", "severe_headache_blurred_vision", "pregnant_woman")
+    assert res_hd_mild["value"] == "Mild Headache"
 
     res_fm = groq_service.extract_single_visit_field("baby movement is normal", "fetal_movement", "pregnant_woman")
     assert res_fm["value"] == "Normal"
+    res_fm_red = groq_service.extract_single_visit_field("fetal movement is reduced", "fetal_movement", "pregnant_woman")
+    assert res_fm_red["value"] == "Reduced"
+    res_fm_abs = groq_service.extract_single_visit_field("no fetal movement absent", "fetal_movement", "pregnant_woman")
+    assert res_fm_abs["value"] == "Absent"
+
+    res_ifa_both = groq_service.extract_single_visit_field("taking both tablets regularly", "ifa_calcium_consumption", "pregnant_woman")
+    assert res_ifa_both["value"] == "Both Consumed Regularly"
+    res_ifa_not = groq_service.extract_single_visit_field("not consumed tablets stopped", "ifa_calcium_consumption", "pregnant_woman")
+    assert res_ifa_not["value"] == "Not Consumed"
+    res_ifa_miss = groq_service.extract_single_visit_field("irregular missed doses sometimes", "ifa_calcium_consumption", "pregnant_woman")
+    assert res_ifa_miss["value"] == "Irregular / Missed Doses"
 
     # 2. Newborn fields
     res_temp = groq_service.extract_single_visit_field("temperature 36.8 celsius", "temperature_celsius", "newborn")

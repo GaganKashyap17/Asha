@@ -243,6 +243,10 @@ def extract_visit(request):
     # 7. Build readback text only when complete
     readback = validation_service.build_readback_text(result) if not missing else None
 
+    # 8. Compute advisory Random Forest ML assessment (never overrides clinical danger alerts)
+    from services.ml_prediction_service import ml_prediction_service
+    ml_assessment = ml_prediction_service.predict(visit_type, result, existing_danger_alert=result.get("danger_flag", False))
+
     return Response({
         "draft_id":           draft_id,
         "record":             result,
@@ -253,6 +257,7 @@ def extract_visit(request):
         "readback_text":      readback,
         "danger_flag":        result.get("danger_flag", False),
         "danger_alert_created": danger_alert_created,
+        "ml_risk_assessment": ml_assessment,
     })
 
 
@@ -475,6 +480,8 @@ def _extract_field_value(transcript: str, field: str, visit_type: str):
 
 def _validate_single_field(field: str, value) -> Optional[str]:
     """Validate a single field value. Returns error string or None if valid."""
+    if value is None or str(value).strip() in ("", "None", "null", "none", "nan"):
+        return None
     if field in ("weight_kg", "current_weight_kg") and value is not None:
         try:
             w = float(value)
@@ -652,61 +659,94 @@ def revisit_init(request):
     spoken_id = identity.get("beneficiary_id")
     spoken_name = identity.get("spoken_name")
     
-    if not spoken_id:
+    if not spoken_id and not spoken_name:
         return Response({
             "found": False,
             "spoken_id": None,
-            "spoken_name": spoken_name,
+            "spoken_name": None,
             "english_transcript": english_transcript,
-            "warning_message": "Could not identify a Beneficiary ID in the speech. Please say the Beneficiary ID clearly (e.g. 'BEN zero zero one').",
+            "warning_message": "Could not identify a Beneficiary ID or Name in the speech. Please speak the Beneficiary ID (e.g. 'PREG 001') or Name clearly.",
         })
     
-    # Normalize ID: e.g. "PREG-000001", "NEWB-000001", "IMM-000001", "BEN001", "BEN 1"
-    clean_id = spoken_id.strip().upper().replace(" ", "")
     import re
-    match = re.search(r"\b(PREG|NEWB|IMM|BEN)[-_ ]?(\d+)\b", clean_id)
-    if match:
-        pfx = match.group(1).upper()
-        digits = match.group(2)
-        if pfx in ("PREG", "NEWB", "IMM", "BEN") and len(digits) >= 4:
-            clean_id = f"{pfx}-{digits.zfill(6)}"
-        else:
-            clean_id = f"{pfx}{digits.zfill(3)}"
-    
-    # DB Lookup (by ID, regex ID, or name)
     from services.mongodb_service import mongodb_service as mdb
-    beneficiary = mdb.find_one("beneficiaries", {
-        "$or": [
-            {"beneficiary_id": clean_id},
-            {"beneficiary_id": {"$regex": f"^{re.escape(clean_id)}$", "$options": "i"}},
-        ],
-        "is_deleted": {"$ne": True},
-    })
-    
-    if not beneficiary and spoken_name:
+
+    clean_id = (spoken_id or "").strip().upper().replace(" ", "")
+    if clean_id:
+        match = re.search(r"\b(PREG|NEWB|IMM|BEN)[-_ ]?((?:202[4-9]|203[0-9])[-_ ]?)?(\d+)\b", clean_id, re.I)
+        if match:
+            pfx = match.group(1).upper()
+            yr = re.sub(r"\D", "", match.group(2) or "")
+            digits = match.group(3)
+            if yr:
+                clean_id = f"{pfx}-{yr}-{digits.zfill(6)}"
+            elif len(digits) >= 4:
+                clean_id = f"{pfx}-{digits.zfill(6)}"
+            else:
+                clean_id = f"{pfx}{digits.zfill(3)}"
+
+    beneficiary = None
+
+    # 1. DB Lookup by ID if present
+    if clean_id:
         beneficiary = mdb.find_one("beneficiaries", {
-            "name": {"$regex": f"^{re.escape(spoken_name.strip())}$", "$options": "i"},
+            "$or": [
+                {"beneficiary_id": clean_id},
+                {"beneficiary_id": {"$regex": f"^{re.escape(clean_id)}$", "$options": "i"}},
+            ],
             "is_deleted": {"$ne": True},
         })
-    
+
+        if not beneficiary:
+            # Check flexible digit suffix matching (e.g. spoken PREG 1 matching PREG-2026-000001 or PREG-000001)
+            digits_match = re.search(r"(\d+)$", clean_id)
+            pfx_match = re.search(r"^(PREG|NEWB|IMM|BEN)", clean_id, re.I)
+            if digits_match and pfx_match:
+                digs = digits_match.group(1).lstrip("0") or "0"
+                pfx = pfx_match.group(1).upper()
+                all_b = mdb.find_all("beneficiaries", {"is_deleted": {"$ne": True}}, limit=300)
+                for b in all_b:
+                    b_id = str(b.get("beneficiary_id") or "").upper()
+                    if b_id.startswith(pfx) and (b_id.endswith(digs) or b_id.endswith(digs.zfill(6))):
+                        beneficiary = b
+                        clean_id = b["beneficiary_id"]
+                        break
+
+    # 2. DB Lookup by Name if ID not found or not provided
+    if not beneficiary and spoken_name:
+        clean_name = spoken_name.strip()
+        beneficiary = mdb.find_one("beneficiaries", {
+            "name": {"$regex": f"^{re.escape(clean_name)}$", "$options": "i"},
+            "is_deleted": {"$ne": True},
+        })
+        if not beneficiary:
+            # Substring / partial match on name
+            beneficiary = mdb.find_one("beneficiaries", {
+                "name": {"$regex": f"{re.escape(clean_name)}", "$options": "i"},
+                "is_deleted": {"$ne": True},
+            })
+        if beneficiary:
+            clean_id = beneficiary.get("beneficiary_id", "")
+
+    # 3. Comprehensive partial scan
     if not beneficiary:
-        # Also check partial match
-        all_b = mdb.find_all("beneficiaries", {"is_deleted": {"$ne": True}}, limit=200)
+        all_b = mdb.find_all("beneficiaries", {"is_deleted": {"$ne": True}}, limit=300)
         for b in all_b:
             b_id = str(b.get("beneficiary_id") or "").upper()
             b_n = str(b.get("name") or "").lower()
-            if clean_id in b_id or (spoken_name and spoken_name.lower() in b_n):
+            if (clean_id and clean_id in b_id) or (spoken_name and spoken_name.lower() in b_n):
                 beneficiary = b
                 clean_id = b["beneficiary_id"]
                 break
 
     if not beneficiary:
+        target_repr = clean_id or spoken_name or "spoken identity"
         return Response({
             "found": False,
             "spoken_id": clean_id,
             "spoken_name": spoken_name,
             "english_transcript": english_transcript,
-            "warning_message": f"No active beneficiary found with ID or name '{clean_id}'. Please verify the ID and try again.",
+            "warning_message": f"No active beneficiary found with ID or name '{target_repr}'. Please verify and try again.",
         })
     
     # Name matching (fuzzy, case-insensitive)
@@ -759,7 +799,7 @@ def revisit_extract(request):
     """
     from services.groq_service import groq_service
     from services.mongodb_service import mongodb_service as mdb
-    from services.danger_detection_service import detect_danger_signs
+    from services.danger_detection_service import detect_danger_signs, detect_danger_signs_from_record
     
     transcript = request.data.get("transcript", "").strip()
     language = request.data.get("language", "en")
@@ -807,11 +847,8 @@ def revisit_extract(request):
     # Determine visit_type
     visit_type = extracted.get("visit_type") or ("pregnancy" if b_cat in ("pregnant_woman", "pregnancy") else "newborn" if b_cat == "newborn" else "immunisation")
     
-    # Run danger detection
+    # Run danger detection on transcript
     danger_results = detect_danger_signs(english_transcript, visit_type)
-    confirmed_dangers = [r for r in danger_results if r.detected]
-    danger_flag = len(confirmed_dangers) > 0
-    danger_signs_list = list({r.name for r in confirmed_dangers}) if confirmed_dangers else extracted.get("danger_signs", [])
     
     # Build complete category-specific clinical visit record
     now = datetime.now(timezone.utc).isoformat()
@@ -826,8 +863,8 @@ def revisit_extract(request):
         "revisit_category": b_cat,
         "is_revisit": True,
         "visit_date": extracted.get("visit_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-        "danger_signs": danger_signs_list,
-        "danger_flag": danger_flag,
+        "danger_signs": [],
+        "danger_flag": False,
         "raw_transcript": transcript,
         "english_transcript": english_transcript,
         "confirmation_status": "pending",
@@ -870,6 +907,44 @@ def revisit_extract(request):
         "next_visit_date": extracted.get("next_visit_date") or extracted.get("next_vaccination_due_date"),
     }
     
+    # Normalize clinical fields for pregnant woman
+    if record.get("vaginal_bleeding"):
+        vb = str(record["vaginal_bleeding"]).lower()
+        if any(w in vb for w in ("no", "none", "nil", "not", "clear", "denied")):
+            record["vaginal_bleeding"] = "No"
+        elif any(w in vb for w in ("spot", "mild")):
+            record["vaginal_bleeding"] = "Spotting"
+        elif any(w in vb for w in ("yes", "bleed", "present", "heavy", "true", "active")):
+            record["vaginal_bleeding"] = "Yes"
+
+    if record.get("ifa_calcium_consumption"):
+        ifa = str(record["ifa_calcium_consumption"]).lower()
+        if any(w in ifa for w in ("irregular", "miss", "sometimes", "forgot", "skip", "poor")):
+            record["ifa_calcium_consumption"] = "Irregular / Missed Doses"
+        elif any(w in ifa for w in ("not", "no", "stopped", "none", "didn't")):
+            record["ifa_calcium_consumption"] = "Not Consumed"
+        elif any(w in ifa for w in ("only ifa", "iron only")):
+            record["ifa_calcium_consumption"] = "Only IFA Consumed"
+        elif any(w in ifa for w in ("only calcium", "calcium only")):
+            record["ifa_calcium_consumption"] = "Only Calcium Consumed"
+        elif any(w in ifa for w in ("both", "regular", "daily", "yes", "all", "compliant")):
+            record["ifa_calcium_consumption"] = "Both Consumed Regularly"
+
+    # Evaluate danger signs on BOTH transcript AND structured record fields
+    record_dangers = detect_danger_signs_from_record(record, b_cat)
+    seen_rules = {r.rule_id for r in danger_results if r.detected}
+    combined_danger_results = list(danger_results)
+    for rd in record_dangers:
+        if rd.rule_id not in seen_rules:
+            combined_danger_results.append(rd)
+            seen_rules.add(rd.rule_id)
+
+    confirmed_dangers = [r for r in combined_danger_results if r.detected]
+    danger_flag = len(confirmed_dangers) > 0
+    danger_signs_list = list({r.name for r in confirmed_dangers}) if confirmed_dangers else extracted.get("danger_signs", [])
+    record["danger_flag"] = danger_flag
+    record["danger_signs"] = danger_signs_list
+
     # Determine missing mandatory fields for this category
     from services.validation_service import validation_service
     missing = validation_service.get_missing_mandatory_fields(record, category=b_cat)
@@ -892,9 +967,13 @@ def revisit_extract(request):
             "referral_message_en": r.referral_message_en if r.detected else None,
             "referral_message_ta": r.referral_message_ta if r.detected else None,
         }
-        for r in danger_results
+        for r in combined_danger_results
+        if r.detected
     ]
     
+    from services.ml_prediction_service import ml_prediction_service
+    ml_assessment = ml_prediction_service.predict(b_cat, record, existing_danger_alert=danger_flag)
+
     return Response({
         "draft_id": draft_id,
         "record": record,
@@ -904,6 +983,7 @@ def revisit_extract(request):
         "readback_text": readback_text,
         "danger_flag": danger_flag,
         "danger_detection_results": danger_detection_results,
+        "ml_risk_assessment": ml_assessment,
         "beneficiary": {
             "beneficiary_id": beneficiary_id,
             "name": beneficiary.get("name"),
@@ -922,6 +1002,7 @@ def revisit_extract_field(request):
     """
     from services.groq_service import groq_service
     from services.validation_service import validation_service
+    from services.danger_detection_service import detect_danger_signs_from_record
 
     field = request.data.get("field", "").strip()
     transcript = request.data.get("transcript", "").strip()
@@ -951,6 +1032,30 @@ def revisit_extract_field(request):
                 missing_fields = validation_service.get_missing_mandatory_fields(updated_record, category=b_cat)
                 is_complete = len(missing_fields) == 0
 
+    # Evaluate danger signs for the field/updated record
+    target_record = updated_record or {field: val}
+    for k, v in extracted_info.items():
+        if k not in ("field", "value", "raw_transcript"):
+            target_record[k] = v
+
+    field_dangers = detect_danger_signs_from_record(target_record, category)
+    confirmed_field_dangers = [r for r in field_dangers if r.detected]
+    danger_flag = len(confirmed_field_dangers) > 0
+    danger_detection_results = [
+        {
+            "rule_id": r.rule_id,
+            "name": r.name,
+            "severity": r.severity,
+            "detected": r.detected,
+            "referral_message_en": r.referral_message_en,
+            "referral_message_ta": r.referral_message_ta,
+        }
+        for r in confirmed_field_dangers
+    ]
+
+    from services.ml_prediction_service import ml_prediction_service
+    ml_assessment = ml_prediction_service.predict(category, target_record, existing_danger_alert=danger_flag)
+
     return Response({
         "field": field,
         "value": val,
@@ -959,6 +1064,9 @@ def revisit_extract_field(request):
         "missing_fields": missing_fields,
         "is_complete": is_complete,
         "record": updated_record,
+        "danger_flag": danger_flag,
+        "danger_detection_results": danger_detection_results,
+        "ml_risk_assessment": ml_assessment,
     })
 
 

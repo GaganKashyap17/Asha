@@ -2,9 +2,9 @@ import { useState, useRef } from 'react'
 import {
   Mic, Square, UserCheck, AlertTriangle, CheckCircle2,
   Loader2, Search, ArrowRight, ShieldAlert,
-  Stethoscope
+  Stethoscope, Brain
 } from 'lucide-react'
-import { voiceAPI, revisitAPI, visitAPI, beneficiaryAPI } from '../services/api'
+import { voiceAPI, revisitAPI, visitAPI, beneficiaryAPI, mlAPI } from '../services/api'
 import { Link } from 'react-router-dom'
 
 type Stage = 'identify' | 'verify' | 'clinical' | 'review' | 'saved'
@@ -96,20 +96,21 @@ export default function RevisitPage() {
   const [error, setError] = useState<string | null>(null)
 
   // Stage 1 & 2: Identity
-  const [identityTranscript, setIdentityTranscript] = useState('')
+  const [_identityTranscript, setIdentityTranscript] = useState('')
   const [identityResult, setIdentityResult] = useState<IdentityResult | null>(null)
   const [manualIdInput, setManualIdInput] = useState('')
   const [verifiedBeneficiary, setVerifiedBeneficiary] = useState<BeneficiaryRecord | null>(null)
 
   // Stage 3 & 4: Clinical
-  const [clinicalTranscript, setClinicalTranscript] = useState('')
-  const [clinicalEnglishTranscript, setClinicalEnglishTranscript] = useState('')
+  const [_clinicalTranscript, setClinicalTranscript] = useState('')
+  const [_clinicalEnglishTranscript, setClinicalEnglishTranscript] = useState('')
   const [draftId, setDraftId] = useState<string | null>(null)
   const [visitRecord, setVisitRecord] = useState<any | null>(null)
   const [missingFields, setMissingFields] = useState<string[]>([])
   const [dangerFlag, setDangerFlag] = useState(false)
   const [dangerResults, setDangerResults] = useState<any[]>([])
   const [readbackText, setReadbackText] = useState<string | null>(null)
+  const [mlAssessment, setMlAssessment] = useState<any | null>(null)
   const [saving, setSaving] = useState(false)
   const [savedVisitId, setSavedVisitId] = useState<string | null>(null)
 
@@ -284,6 +285,7 @@ export default function RevisitPage() {
       setMissingFields(data.missing_fields || [])
       setDangerFlag(data.danger_flag || false)
       setDangerResults(data.danger_detection_results || [])
+      setMlAssessment(data.ml_risk_assessment || null)
       setReadbackText(data.readback_text || null)
       setClinicalEnglishTranscript(data.record?.english_transcript || text)
       setStage('review')
@@ -364,6 +366,15 @@ export default function RevisitPage() {
     const updated = { ...visitRecord, [field]: value }
     setVisitRecord(updated)
     setMissingFields((prev) => prev.filter((f) => f !== field))
+
+    // Real-time advisory ML prediction evaluation
+    const bCat = getBeneficiaryCategory(verifiedBeneficiary)
+    mlAPI
+      .predict(bCat, updated, dangerFlag)
+      .then((res) => {
+        if (res.data?.success) setMlAssessment(res.data)
+      })
+      .catch(() => {})
   }
 
   // ── Save Confirm ────────────────────────────────────────────────────────
@@ -411,7 +422,7 @@ export default function RevisitPage() {
       ]
 
       for (const f of fieldsToSync) {
-        if (visitRecord[f] !== undefined && visitRecord[f] !== null) {
+        if (visitRecord[f] !== undefined && visitRecord[f] !== null && String(visitRecord[f]).trim() !== '') {
           try {
             await visitAPI.addDraftField(draftId, { field: f, value: visitRecord[f] })
           } catch {
@@ -448,6 +459,7 @@ export default function RevisitPage() {
     setMissingFields([])
     setDangerFlag(false)
     setDangerResults([])
+    setMlAssessment(null)
     setReadbackText(null)
     setError(null)
     setSavedVisitId(null)
@@ -915,6 +927,89 @@ export default function RevisitPage() {
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-xs text-blue-900">
               <span className="font-bold block mb-1">ASHA Read-back Summary:</span>
               <p className="italic">{readbackText}</p>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════════════════ */}
+          {/* ML RISK ASSESSMENT (Random Forest Classifier - Advisory)          */}
+          {/* ══════════════════════════════════════════════════════════════════ */}
+          {mlAssessment && (
+            <div className={`rounded-2xl p-4.5 border shadow-sm transition-all ${
+              mlAssessment.prediction === 1 || mlAssessment.severity === 'emergency'
+                ? 'bg-amber-50/70 border-amber-300 text-amber-950'
+                : 'bg-emerald-50/60 border-emerald-200 text-emerald-950'
+            }`}>
+              <div className="flex items-start justify-between gap-3 mb-2.5">
+                <div className="flex items-center gap-2.5">
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                    mlAssessment.prediction === 1 || mlAssessment.severity === 'emergency'
+                      ? 'bg-amber-200/80 text-amber-800'
+                      : 'bg-emerald-200/80 text-emerald-800'
+                  }`}>
+                    <Brain className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-sm text-gray-900">{mlAssessment.model_name}</span>
+                      <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded font-mono font-bold uppercase tracking-wider">
+                        ML Advisory
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-gray-500">
+                      Automated screening prediction across clinical, growth &amp; schedule features
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <span className={`inline-block px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wide border ${
+                    mlAssessment.prediction === 1
+                      ? 'bg-amber-100 text-amber-800 border-amber-300'
+                      : 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                  }`}>
+                    {mlAssessment.prediction_label}
+                  </span>
+                </div>
+              </div>
+
+              {/* Probability Bar */}
+              <div className="bg-white/80 rounded-xl p-3 border border-gray-200/70 space-y-2 mb-2.5 text-xs">
+                <div className="flex justify-between items-center text-xs font-medium text-gray-700">
+                  <span>Clinical Concern Probability:</span>
+                  <span className="font-mono font-bold text-gray-900">
+                    {(mlAssessment.probability_clinical_concern * 100).toFixed(1)}%
+                  </span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
+                  <div
+                    className={`h-2.5 rounded-full transition-all duration-500 ${
+                      mlAssessment.probability_clinical_concern >= 0.5 ? 'bg-amber-500' : 'bg-emerald-500'
+                    }`}
+                    style={{ width: `${Math.min(100, Math.max(0, mlAssessment.probability_clinical_concern * 100))}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-[10px] text-gray-400">
+                  <span>Standard Expected Range (0%)</span>
+                  <span>Screening Concern Threshold (50%)</span>
+                  <span>High Concern (100%)</span>
+                </div>
+              </div>
+
+              {/* Clinical explanations */}
+              {mlAssessment.clinical_explanations && mlAssessment.clinical_explanations.length > 0 && (
+                <div className="space-y-1 mb-2">
+                  <span className="text-xs font-semibold text-gray-700 block">Identified Clinical Drivers:</span>
+                  <ul className="list-disc list-inside space-y-0.5 text-xs text-gray-600 pl-1">
+                    {mlAssessment.clinical_explanations.map((exp: string, idx: number) => (
+                      <li key={idx} className="leading-relaxed">{exp}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Disclaimer Banner */}
+              <div className="text-[11px] text-gray-500 bg-white/60 p-2 rounded-lg border border-gray-200/60 leading-relaxed italic">
+                ⚠️ {mlAssessment.safety_disclaimer}
+              </div>
             </div>
           )}
 

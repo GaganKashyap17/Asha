@@ -4,6 +4,8 @@ import { authAPI } from '../services/api'
 interface User {
   worker_id: string
   name: string
+  email?: string
+  mobile_number?: string
   district?: string
   phc?: string
   language?: string
@@ -13,7 +15,8 @@ interface User {
 interface AuthContextType {
   user: User | null
   token: string | null
-  login: (worker_id: string, password: string) => Promise<void>
+  login: (identifier: string, password: string) => Promise<void>
+  signup: (data: { email: string; password: string; mobile_number: string; name?: string }) => Promise<void>
   logout: () => void
 }
 
@@ -28,8 +31,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     sessionStorage.getItem('asha_token')
   )
 
-  async function login(worker_id: string, password: string) {
-    const res = await authAPI.login(worker_id, password)
+  async function login(identifier: string, password: string) {
+    const res = await authAPI.login(identifier, password)
+    const { token: t, user: u } = res.data
+    sessionStorage.setItem('asha_token', t)
+    sessionStorage.setItem('asha_user', JSON.stringify(u))
+    setToken(t)
+    setUser(u)
+  }
+
+  async function signup(data: { email: string; password: string; mobile_number: string; name?: string }) {
+    const res = await authAPI.signup(data)
     const { token: t, user: u } = res.data
     sessionStorage.setItem('asha_token', t)
     sessionStorage.setItem('asha_user', JSON.stringify(u))
@@ -46,7 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout }}>
+    <AuthContext.Provider value={{ user, token, login, signup, logout }}>
       {children}
     </AuthContext.Provider>
   )

@@ -266,20 +266,70 @@ Return ONLY valid JSON matching this exact schema:
             raise
 
 
+    def _parse_identity_regex(self, transcript: str) -> dict:
+        """Deterministic regex parsing for Beneficiary ID and Name from spoken speech."""
+        import re
+        t = transcript.strip()
+        b_id = None
+        name = None
+
+        # Convert spoken digits in English, Kannada, Hindi, Tamil
+        word_digits = {
+            "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+            "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
+            "ಒಂದು": "1", "ಎರಡು": "2", "ಮೂರು": "3", "ನಾಲ್ಕು": "4", "ಐದು": "5",
+            "एक": "1", "दो": "2", "तीन": "3", "चार": "4", "पांच": "5",
+            "ஒன்று": "1", "இரண்டு": "2", "மூன்று": "3", "நான்கு": "4", "ஐந்து": "5",
+        }
+        norm_t = t
+        for w, d in word_digits.items():
+            norm_t = re.sub(rf"\b{re.escape(w)}\b", d, norm_t, flags=re.I)
+
+        # Match ID pattern: PREG, NEWB, IMM, BEN (e.g. PREG-2026-000001, PREG-000001, PREG 001, PREG 1, BEN001)
+        m = re.search(r"\b(PREG|NEWB|IMM|BEN)[-_ ]?((?:202[4-9]|203[0-9])[-_ ]?)?(\d+)\b", norm_t, re.I)
+        if m:
+            pfx = m.group(1).upper()
+            yr = re.sub(r"\D", "", m.group(2) or "")
+            num = m.group(3)
+            if yr:
+                b_id = f"{pfx}-{yr}-{num.zfill(6)}"
+            elif len(num) >= 4:
+                b_id = f"{pfx}-{num.zfill(6)}"
+            else:
+                b_id = f"{pfx}{num.zfill(3)}"
+            clean_text = norm_t[:m.start()] + " " + norm_t[m.end():]
+        else:
+            clean_text = norm_t
+
+        # Strip common prefixes to extract spoken name
+        clean_text = re.sub(r"\b(beneficiary|patient|mother|baby|child|name|is|her|his|id|number|for|revisit|the|visit)\b", " ", clean_text, flags=re.I)
+        clean_text = re.sub(r"[^\w\s]", " ", clean_text).strip()
+        words = [w for w in clean_text.split() if len(w) >= 2 and w.isalpha() and not w.isdigit()]
+        if words:
+            name = " ".join(words).title()
+
+        return {"beneficiary_id": b_id, "spoken_name": name}
+
     def extract_revisit_identity(self, transcript: str) -> dict:
         """Extract beneficiary ID and name from revisit speech."""
+        direct = self._parse_identity_regex(transcript)
+
         system_prompt = """You are a healthcare data extraction assistant for ASHA workers in India.
 Extract the beneficiary ID and name from a revisit speech transcript.
 
 RULES:
-- Beneficiary IDs follow pattern: BEN followed by digits (e.g. BEN001, BEN042, BEN 001)
-- Spoken forms may include: "BEN zero zero one", "beneficiary one", "patient BEN042", "BEN 1" -> normalize to BENxxx (e.g. BEN001)
-- Extract the spoken name (may be a beneficiary's name like "Lakshmi")
+- Beneficiary IDs may follow:
+  * Category IDs: PREG-YYYY-XXXXXX, PREG-XXXXXX, PREG xxx, PREG x (e.g. "PREG-2026-000001", "PREG 001", "PREG 1")
+  * NEWB-YYYY-XXXXXX, NEWB-XXXXXX, NEWB xxx, NEWB x (e.g. "NEWB-2026-000001", "NEWB 001")
+  * IMM-YYYY-XXXXXX, IMM-XXXXXX, IMM xxx, IMM x (e.g. "IMM-2026-000001", "IMM 001")
+  * Legacy IDs: BEN followed by digits (e.g. BEN001, BEN 001, BEN 1)
+- Spoken forms may include: "PREG zero zero one", "PREG one", "beneficiary Lakshmi PREG 001", "BEN zero zero one" -> normalize properly
+- Extract the spoken name (e.g. "Lakshmi", "Anushka", "Meena", etc.)
 - Use null if not mentioned
 
 Return ONLY valid JSON:
 {
-  "beneficiary_id": "BENxxx" or null,
+  "beneficiary_id": string or null,
   "spoken_name": string or null
 }"""
 
@@ -291,14 +341,20 @@ Return ONLY valid JSON:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Transcript: {transcript}"},
                 ],
-                max_tokens=200,
+                max_tokens=1024,
                 temperature=0.0,
                 response_format={"type": "json_object"},
             )
-            return json.loads(response.choices[0].message.content)
+            content = response.choices[0].message.content or ""
+            if content.strip():
+                parsed = json.loads(content)
+                b_id = parsed.get("beneficiary_id") or direct.get("beneficiary_id")
+                name = parsed.get("spoken_name") or direct.get("spoken_name")
+                return {"beneficiary_id": b_id, "spoken_name": name}
         except Exception as e:
-            logger.error(f"Revisit identity extraction failed: {type(e).__name__}")
-            raise
+            logger.warning(f"Revisit identity LLM call failed ({type(e).__name__}); using regex extraction")
+
+        return direct
 
     def extract_revisit_clinical(self, transcript: str, beneficiary_type: str) -> dict:
         """Extract clinical visit data for a revisit across all categories."""
@@ -421,6 +477,30 @@ Return ONLY valid JSON matching this exact schema:
             # Ensure blood_pressure string is synchronized if systolic/diastolic present
             if raw.get("blood_pressure_systolic") and raw.get("blood_pressure_diastolic") and not raw.get("blood_pressure"):
                 raw["blood_pressure"] = f"{raw['blood_pressure_systolic']}/{raw['blood_pressure_diastolic']}"
+
+            # Normalize vaginal_bleeding and ifa_calcium_consumption
+            if raw.get("vaginal_bleeding"):
+                vb = str(raw["vaginal_bleeding"]).lower()
+                if any(w in vb for w in ("no", "none", "nil", "clear", "not")):
+                    raw["vaginal_bleeding"] = "No"
+                elif any(w in vb for w in ("spot", "mild")):
+                    raw["vaginal_bleeding"] = "Spotting"
+                elif any(w in vb for w in ("yes", "bleed", "present", "heavy", "active")):
+                    raw["vaginal_bleeding"] = "Yes"
+
+            if raw.get("ifa_calcium_consumption"):
+                ifa = str(raw["ifa_calcium_consumption"]).lower()
+                if any(w in ifa for w in ("irregular", "miss", "sometimes", "forgot")):
+                    raw["ifa_calcium_consumption"] = "Irregular / Missed Doses"
+                elif any(w in ifa for w in ("not", "no", "stopped", "none")):
+                    raw["ifa_calcium_consumption"] = "Not Consumed"
+                elif any(w in ifa for w in ("only ifa", "iron only")):
+                    raw["ifa_calcium_consumption"] = "Only IFA Consumed"
+                elif any(w in ifa for w in ("only calcium", "calcium only")):
+                    raw["ifa_calcium_consumption"] = "Only Calcium Consumed"
+                elif any(w in ifa for w in ("both", "regular", "daily", "yes", "all")):
+                    raw["ifa_calcium_consumption"] = "Both Consumed Regularly"
+
             return raw
         except Exception as e:
             logger.error(f"Revisit clinical extraction failed: {type(e).__name__}")
@@ -474,41 +554,65 @@ Return ONLY valid JSON matching this exact schema:
             if nums:
                 extracted_val = float(nums[0])
 
-        # 5. Vaginal Bleeding
+        # 5. Vaginal Bleeding (Options: No, Yes, Spotting)
         elif field == "vaginal_bleeding":
-            if any(w in t_low for w in ("no", "none", "nil", "false", "nothing", "not")):
+            if any(w in t_low for w in ("no", "none", "nil", "false", "nothing", "not", "clear", "normal", "ಇಲ್ಲ", "இல்லை", "नहीं")):
                 extracted_val = "No"
+            elif any(w in t_low for w in ("spot", "mild", "slight", "little blood")):
+                extracted_val = "Spotting"
+            elif any(w in t_low for w in ("yes", "bleed", "present", "heavy", "active", "ಹೌದು", "ஆம்", "हाँ")):
+                extracted_val = "Yes"
             else:
-                extracted_val = t
+                extracted_val = "No"
 
-        # 6. Severe Headache or Blurred Vision
+        # 6. Severe Headache or Blurred Vision (Options: No, Yes, Mild Headache)
         elif field in ("severe_headache_blurred_vision", "headache_blurred_vision"):
-            if any(w in t_low for w in ("no", "none", "nil", "neither", "nothing")):
+            if any(w in t_low for w in ("no", "none", "nil", "neither", "nothing", "not", "normal", "fine", "clear", "ಇಲ್ಲ", "இல்லை", "नहीं")):
                 extracted_val = "No"
+            elif any(w in t_low for w in ("mild", "slight", "little headache")):
+                extracted_val = "Mild Headache"
+            elif any(w in t_low for w in ("yes", "headache", "blur", "vision", "severe", "dizzy", "pain", "ಹೌದು", "ஆம்", "हाँ")):
+                extracted_val = "Yes"
             else:
-                extracted_val = t
+                extracted_val = "No"
 
-        # 7. Fetal Movement
+        # 7. Fetal Movement (Options: Normal, Reduced, Absent)
         elif field in ("fetal_movement", "fetal_movements"):
-            if any(w in t_low for w in ("normal", "good", "active", "well", "fine", "moving")):
-                extracted_val = "Normal"
-            elif any(w in t_low for w in ("decreased", "reduced", "slow", "less", "no movement")):
+            if any(w in t_low for w in ("absent", "no movement", "stopped", "none", "zero", "not moving")):
+                extracted_val = "Absent"
+            elif any(w in t_low for w in ("decreas", "reduc", "slow", "less", "sluggish", "ಕಡಿಮೆ", "कम")):
                 extracted_val = "Reduced"
+            elif any(w in t_low for w in ("normal", "good", "active", "well", "fine", "moving", "kicking", "yes", "ಹೌದು", "हाँ", "ಸಾಮಾನ್ಯ")):
+                extracted_val = "Normal"
             else:
-                extracted_val = t
+                extracted_val = "Normal"
 
-        # 8. IFA and Calcium Tablet Consumption
+        # 8. IFA and Calcium Tablet Consumption (Options: Both Consumed Regularly, Only IFA Consumed, Only Calcium Consumed, Irregular / Missed Doses, Not Consumed)
         elif field in ("ifa_calcium_consumption", "ifa_calcium", "tablets"):
-            if any(w in t_low for w in ("yes", "regular", "daily", "taking", "consumed", "regularly")):
-                extracted_val = "Regular / Consumed"
+            if any(w in t_low for w in ("only ifa", "iron only", "ifa only")):
+                extracted_val = "Only IFA Consumed"
+                extra["ifa_given"] = True
+                extra["calcium_given"] = False
+            elif any(w in t_low for w in ("only calcium", "calcium only")):
+                extracted_val = "Only Calcium Consumed"
+                extra["ifa_given"] = False
+                extra["calcium_given"] = True
+            elif any(w in t_low for w in ("irregular", "miss", "sometimes", "forgot")):
+                extracted_val = "Irregular / Missed Doses"
                 extra["ifa_given"] = True
                 extra["calcium_given"] = True
-            elif any(w in t_low for w in ("no", "not", "irregular", "stopped")):
-                extracted_val = "Irregular / Not consumed"
+            elif any(w in t_low for w in ("not", "no", "stopped", "none", "didn't", "left", "ಇಲ್ಲ", "नहीं", "இல்லை")):
+                extracted_val = "Not Consumed"
                 extra["ifa_given"] = False
                 extra["calcium_given"] = False
+            elif any(w in t_low for w in ("both", "regular", "daily", "taking", "consumed", "regularly", "yes", "all", "compliant", "ಹೌದು", "हाँ", "ஆம்")):
+                extracted_val = "Both Consumed Regularly"
+                extra["ifa_given"] = True
+                extra["calcium_given"] = True
             else:
-                extracted_val = t
+                extracted_val = "Both Consumed Regularly"
+                extra["ifa_given"] = True
+                extra["calcium_given"] = True
 
         # 9. Body Temperature (°C)
         elif field in ("temperature_celsius", "temperature"):
@@ -525,40 +629,46 @@ Return ONLY valid JSON matching this exact schema:
             if nums:
                 extracted_val = int(nums[0])
 
-        # 11. Breastfeeding Status
+        # 11. Breastfeeding Status (Options: Exclusive Breastfeeding, Partial Breastfeeding, Formula / Other Milk, Not Breastfeeding)
         elif field == "breastfeeding_status":
-            if any(w in t_low for w in ("exclusive", "only breast", "breastfed", "good latch", "yes")):
+            if any(w in t_low for w in ("not", "stopped", "no", "none")):
+                extracted_val = "Not Breastfeeding"
+            elif any(w in t_low for w in ("formula", "other milk", "bottle", "cow", "powder")):
+                extracted_val = "Formula / Other Milk"
+            elif any(w in t_low for w in ("partial", "mixed", "some")):
+                extracted_val = "Partial Breastfeeding"
+            elif any(w in t_low for w in ("exclusive", "only breast", "breastfed", "good latch", "yes", "well")):
                 extracted_val = "Exclusive Breastfeeding"
             else:
-                extracted_val = t
+                extracted_val = "Exclusive Breastfeeding"
 
-        # 12. Difficulty in Feeding
+        # 12. Difficulty in Feeding (Options: No, Yes)
         elif field in ("difficulty_in_feeding", "feeding_difficulty"):
-            if any(w in t_low for w in ("no", "none", "nil", "feeding well", "normal")):
-                extracted_val = "No"
+            if any(w in t_low for w in ("yes", "difficult", "unable", "cannot", "problem", "latch problem")):
+                extracted_val = "Yes"
             else:
-                extracted_val = t
+                extracted_val = "No"
 
-        # 13. Difficulty in Breathing
+        # 13. Difficulty in Breathing (Options: No, Yes)
         elif field in ("difficulty_in_breathing", "breathing_difficulties"):
-            if any(w in t_low for w in ("no", "none", "nil", "normal breathing", "fine")):
-                extracted_val = "No"
+            if any(w in t_low for w in ("yes", "fast", "chest", "grunting", "difficult", "stridor")):
+                extracted_val = "Yes"
             else:
-                extracted_val = t
+                extracted_val = "No"
 
-        # 14. Yellowing of Skin or Eyes
+        # 14. Yellowing of Skin or Eyes (Options: No, Yes)
         elif field in ("yellowing_skin_eyes", "jaundice", "jaundice_observations"):
-            if any(w in t_low for w in ("no", "none", "nil", "clear", "normal")):
+            if any(w in t_low for w in ("yes", "jaundice", "yellow", "yellowing")):
+                extracted_val = "Yes"
+            else:
                 extracted_val = "No"
-            else:
-                extracted_val = t
 
-        # 15. Umbilical Cord Condition
+        # 15. Umbilical Cord Condition (Options: Clean & Dry, Redness / Pus / Foul Smell)
         elif field in ("umbilical_cord_condition", "cord_condition", "cord"):
-            if any(w in t_low for w in ("clean", "dry", "normal", "healing", "good", "fine")):
-                extracted_val = "Clean and dry / Normal"
+            if any(w in t_low for w in ("red", "pus", "foul", "smell", "discharge", "infected", "bleeding")):
+                extracted_val = "Redness / Pus / Foul Smell"
             else:
-                extracted_val = t
+                extracted_val = "Clean & Dry"
 
         # 16. Current Height / Length (cm)
         elif field in ("height_cm", "length_cm", "height"):
@@ -566,12 +676,16 @@ Return ONLY valid JSON matching this exact schema:
             if nums:
                 extracted_val = float(nums[0])
 
-        # 17. General Health Condition
+        # 17. General Health Condition (Options: Good / Active, Fair, Fever / Sick)
         elif field in ("general_health_condition", "health_condition"):
-            if any(w in t_low for w in ("good", "normal", "healthy", "fine", "active", "well")):
-                extracted_val = "Good / Normal"
+            if any(w in t_low for w in ("fever", "sick", "ill", "poor", "unwell", "danger")):
+                extracted_val = "Fever / Sick"
+            elif any(w in t_low for w in ("fair", "alert", "moderate", "okay")):
+                extracted_val = "Fair"
+            elif any(w in t_low for w in ("good", "normal", "healthy", "fine", "active", "well")):
+                extracted_val = "Good / Active"
             else:
-                extracted_val = t
+                extracted_val = "Good / Active"
 
         # 18-20. Vaccine fields
         elif field in ("vaccines_due_today", "vaccines_given_today"):

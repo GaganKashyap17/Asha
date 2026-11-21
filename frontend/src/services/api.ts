@@ -10,6 +10,14 @@ const api = axios.create({
 api.interceptors.request.use((config) => {
   const token = sessionStorage.getItem('asha_token')
   if (token) config.headers.Authorization = `Bearer ${token}`
+  const userStr = sessionStorage.getItem('asha_user')
+  if (userStr) {
+    try {
+      const u = JSON.parse(userStr)
+      if (u.worker_id) config.headers['X-Worker-Id'] = u.worker_id
+      if (u.email) config.headers['X-User-Email'] = u.email
+    } catch {}
+  }
   return config
 })
 
@@ -28,8 +36,15 @@ api.interceptors.response.use(
 export default api
 
 export const authAPI = {
-  login: (worker_id: string, password: string) =>
-    api.post('/api/accounts/login/', { worker_id, password }),
+  login: (identifier: string, password: string) =>
+    api.post('/api/accounts/login/', {
+      identifier,
+      worker_id: identifier,
+      email: identifier,
+      password,
+    }),
+  signup: (data: { email: string; password: string; mobile_number: string; name?: string }) =>
+    api.post('/api/accounts/signup/', data),
   logout: () => api.post('/api/accounts/logout/'),
   me: () => api.get('/api/accounts/me/'),
 }
@@ -58,6 +73,12 @@ export const gnaniAPI = {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     return `${proto}//${host}:${port}/ws/gnani/stream/?language=${language}`
   },
+}
+
+export const mlAPI = {
+  predict: (category: string, record: object, existing_danger_alert: boolean = false) =>
+    api.post('/api/ml/predict/', { category, record, existing_danger_alert }),
+  getModels: () => api.get('/api/ml/models/'),
 }
 
 

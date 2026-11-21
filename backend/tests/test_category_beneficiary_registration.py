@@ -350,3 +350,42 @@ def test_voice_register_preview_does_not_generate_id(api_client):
     assert resp.data["beneficiary_id"] is None
     # Ensure nothing was saved in the database
     assert len(mongodb_service.find_all("beneficiaries")) == 0
+
+
+def test_newborn_flexible_mother_id_matching(api_client):
+    """Zero-padded or unpadded mother ID (e.g. PREG-00004 vs PREG-000004) successfully matches."""
+    mongodb_service.insert("beneficiaries", {
+        "beneficiary_id": "PREG-000004",
+        "name": "Priya",
+        "beneficiary_type": "pregnant_woman",
+        "is_deleted": False,
+    })
+
+    payload = {
+        "beneficiary_type": "newborn",
+        "name": "Baby of Priya",
+        "dob": "2026-11-20",
+        "gender": "female",
+        "mother_beneficiary_id": "PREG-00004",  # 4 zeroes instead of 5
+        "place_of_delivery": "Government Hospital",
+        "birth_weight_kg": 2.9,
+    }
+    resp = api_client.post("/api/beneficiaries/", payload, format="json")
+    assert resp.status_code == 201
+    assert resp.data["newborn_details"]["mother_beneficiary_id"] == "PREG-000004"
+    assert resp.data["newborn_details"]["mother_name"] == "Priya"
+
+
+def test_beneficiary_lookup_flexible_id(api_client):
+    """Lookup /lookup/PREG-00004/ finds PREG-000004 successfully."""
+    mongodb_service.insert("beneficiaries", {
+        "beneficiary_id": "PREG-000004",
+        "name": "Priya",
+        "beneficiary_type": "pregnant_woman",
+        "is_deleted": False,
+    })
+
+    resp = api_client.get("/api/beneficiaries/lookup/PREG-00004/")
+    assert resp.status_code == 200
+    assert resp.data["found"] is True
+    assert resp.data["beneficiary"]["beneficiary_id"] == "PREG-000004"

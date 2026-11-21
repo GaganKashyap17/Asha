@@ -1,0 +1,63 @@
+{
+  "dataset": "newborn",
+  "train_samples": 307,
+  "test_samples": 77,
+  "train_beneficiaries": 173,
+  "test_beneficiaries": 44,
+  "accuracy": 0.974,
+  "precision": 1.0,
+  "recall_sensitivity": 0.9412,
+  "specificity": 1.0,
+  "f1_score": 0.9697,
+  "confusion_matrix": {
+    "true_negatives": 43,
+    "false_positives": 0,
+    "false_negatives": 2,
+    "true_positives": 32
+  },
+  "false_negative_count": 2,
+  "false_positive_count": 0,
+  "classification_report": "                       precision    recall  f1-score   support\n\nStandard/Low Risk (0)       0.96      1.00      0.98        43\n Clinical Concern (1)       1.00      0.94      0.97        34\n\n             accuracy                           0.97        77\n            macro avg       0.98      0.97      0.97        77\n         weighted avg       0.98      0.97      0.97        77\n",
+  "top_10_features": [
+    {
+      "feature": "Body_Temperature_C",
+      "importance": 0.1921
+    },
+    {
+      "feature": "Yellowing_of_Skin_or_Eyes_No",
+      "importance": 0.1127
+    },
+    {
+      "feature": "Yellowing_of_Skin_or_Eyes_Yes",
+      "importance": 0.1042
+    },
+    {
+      "feature": "Respiratory_Rate_bpm",
+      "importance": 0.0932
+    },
+    {
+      "feature": "Birth_Weight_kg",
+      "importance": 0.0919
+    },
+    {
+      "feature": "Current_Weight_kg",
+      "importance": 0.084
+    },
+    {
+      "feature": "Age_Days",
+      "importance": 0.0566
+    },
+    {
+      "feature": "Umbilical_Cord_Condition_Abnormal",
+      "importance": 0.0546
+    },
+    {
+      "feature": "Umbilical_Cord_Condition_Normal",
+      "importance": 0.0453
+    },
+    {
+      "feature": "Difficulty_in_Breathing_No",
+      "importance": 0.0411
+    }
+  ]
+}

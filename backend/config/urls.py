@@ -17,6 +17,7 @@ def api_root(request):
             "/api/followups/",
             "/api/alerts/",
             "/api/analytics/",
+            "/api/ml/",
         ]
     })
 
@@ -30,4 +31,5 @@ urlpatterns = [
     path('api/followups/', include('apps.followups.urls')),
     path('api/alerts/', include('apps.danger_alerts.urls')),
     path('api/analytics/', include('apps.analytics.urls')),
+    path('api/ml/', include('apps.ml.urls')),
 ]

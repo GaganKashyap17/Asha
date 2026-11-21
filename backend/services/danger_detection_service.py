@@ -19,8 +19,10 @@ DANGER_SIGN_REGISTRY = [
         "source": "WHO Pregnancy, Childbirth, Postpartum and Newborn Care Guide, 2015, Section C1",
         "trigger_phrases": [
             "bleeding", "blood", "hemorrhage", "haemorrhage", "bleed",
+            "presence of bleeding", "bleeding present", "bleeding is present",
             "ரத்தப்போக்கு", "ரத்தம்", "வெளியேறும் ரத்தம்",
-            "spotting", "discharge blood",
+            "spotting", "discharge blood", "blood coming out",
+            "ರಕ್ತಸ್ರಾವ", "ರಕ್ತ", "रक्तस्राव", "खून", "ब्लीडिंग",
         ],
         "negation_phrases": [
             "no bleeding", "no blood", "stopped bleeding", "history of bleeding",
@@ -156,6 +158,44 @@ DANGER_SIGN_REGISTRY = [
             "Always use clinical judgment."
         ),
     },
+    {
+        "id": "DS005",
+        "category": "irregular_pills_ifa_calcium",
+        "name": "Irregular Pills / IFA & Calcium Non-compliance",
+        "source": "WHO Antenatal Care Guidelines 2016; MoHFW Anemia Mukt Bharat",
+        "trigger_phrases": [
+            "irregular pills", "irregular pill", "irregular tablet", "irregular tablets",
+            "irregular medicine", "irregular ifa", "irregular calcium", "missed pills",
+            "missed tablets", "missed doses", "not taking pills", "not taking medicine",
+            "pills irregular", "tablets irregular", "skipped pills", "stopped pills",
+            "not consumed", "irregular", "missed dose", "missed pill",
+            "மாத்திரை ஒழுங்காக சாப்பிடவில்லை", "மாத்திரை சாப்பிடவில்லை", "முறையற்ற மாத்திரைகள்",
+            "ಮಾತ್ರೆ ನಿಯಮಿತವಾಗಿ ತೆಗೆದುಕೊಂಡಿಲ್ಲ", "ಅನಿಯಮಿತ ಮಾತ್ರೆ",
+            "अनियमित गोलियां", "दवाई नहीं ली", "गोलियां नहीं खाई",
+        ],
+        "negation_phrases": [
+            "taking regularly", "consumed regularly", "both consumed regularly",
+            "no missed pills", "taking daily", "regularly taking", "not irregular",
+            "compliant with pills", "no irregular pills",
+        ],
+        "historical_phrases": ["used to be irregular", "past irregular"],
+        "hypothetical_phrases": ["if irregular", "what if missed"],
+        "context_window": 10,
+        "severity": "emergency",
+        "referral_message_en": (
+            "EMERGENCY / HIGH RISK: Irregular pills / missed IFA and Calcium tablet doses reported during pregnancy. "
+            "Sharply increases maternal risk of severe nutritional anaemia, hemorrhage, and fetal complications. "
+            "Immediate adherence counselling, Hb screening, and PHC clinical evaluation required."
+        ),
+        "referral_message_ta": (
+            "அவசரநிலை / அதிக ஆபத்து: கர்ப்ப காலத்தில் முறையற்ற மாத்திரைகள் / விடுபட்ட IFA & கால்சியம் மருந்துகள் உட்கொள்ளல். "
+            "கடுமையான ரத்த சோகை மற்றும் சிக்கல்களைத் தடுக்க உடனடியாக PHC மருத்துவரிடம் வழிகாட்டல் பெறவும்."
+        ),
+        "disclaimer": (
+            "This is a referral-support tool, not a diagnostic system. "
+            "Always use clinical judgment."
+        ),
+    },
 ]
 
 
@@ -211,9 +251,11 @@ def detect_danger_signs(transcript: str, visit_type: str = "") -> List[DangerSig
         context_snippet = transcript[start_char:end_char]
 
         # Check negation (full text)
+        import re
         is_negated = False
         for neg in rule.get("negation_phrases", []):
-            if neg.lower() in text_lower:
+            pattern = r"(?<!\w)" + re.escape(neg.lower()) + r"(?!\w)"
+            if re.search(pattern, text_lower):
                 is_negated = True
                 break
 
@@ -292,3 +334,263 @@ def summarize_danger_results(results: List[DangerSignResult]) -> dict:
         "all_matches": len(results),
         "ambiguous_matches": sum(1 for r in results if r.is_ambiguous),
     }
+
+
+def detect_danger_signs_from_record(record: dict, category: str = "") -> List[DangerSignResult]:
+    """
+    Deterministic clinical danger sign evaluation based directly on structured fields.
+    Guarantees that when high-risk or emergency values are selected or extracted into
+    the visit record, the danger flag and emergency referral advice are triggered immediately.
+    """
+    results: List[DangerSignResult] = []
+    if not record or not isinstance(record, dict):
+        return results
+
+    b_cat = (category or record.get("revisit_category") or record.get("visit_type") or "").lower()
+
+    # 1. Vaginal Bleeding (Presence of bleeding = Emergency)
+    vb = str(record.get("vaginal_bleeding") or "").strip().lower()
+    if vb in ("yes", "bleeding", "spotting", "present", "true", "active") or ("bleed" in vb and not any(k in vb for k in ("no", "none", "not"))):
+        results.append(DangerSignResult(
+            rule_id="DS001",
+            category="obstetric_hemorrhage",
+            name="Bleeding during pregnancy (Presence of Bleeding)",
+            severity="emergency",
+            detected=True,
+            is_negated=False,
+            is_historical=False,
+            is_hypothetical=False,
+            is_ambiguous=False,
+            matched_phrase="Presence of Bleeding (Vaginal Bleeding: Yes)",
+            context_snippet=f"vaginal_bleeding: {record.get('vaginal_bleeding')}",
+            referral_message_en=(
+                "EMERGENCY: Presence of vaginal bleeding during pregnancy reported. "
+                "Immediate referral to Primary Health Centre (PHC) / Hospital required. Do not wait."
+            ),
+            referral_message_ta=(
+                "அவசரநிலை: கர்ப்பகால ரத்தப்போக்கு அறிகுறி பதிவாகியுள்ளது. "
+                "உடனடியாக அருகிலுள்ள ஆரம்ப சுகாதார நிலையத்திற்கு (PHC) அனுப்பவும்."
+            ),
+            source="WHO Pregnancy, Childbirth, Postpartum and Newborn Care Guide, 2015, Section C1",
+            disclaimer="This is a referral-support tool, not a diagnostic system. Always use clinical judgment.",
+        ))
+
+    # 2. Irregular Pills / IFA & Calcium Non-compliance = Emergency / High Risk
+    ifa = str(record.get("ifa_calcium_consumption") or "").strip().lower()
+    if any(k in ifa for k in ("irregular", "miss", "not consumed", "stopped", "none")) and not any(k in ifa for k in ("both consumed regularly", "regularly", "compliant")):
+        results.append(DangerSignResult(
+            rule_id="DS005",
+            category="irregular_pills_ifa_calcium",
+            name="Irregular Pills / IFA & Calcium Non-compliance",
+            severity="emergency",
+            detected=True,
+            is_negated=False,
+            is_historical=False,
+            is_hypothetical=False,
+            is_ambiguous=False,
+            matched_phrase="Irregular Pills (IFA & Calcium: Irregular / Missed Doses)",
+            context_snippet=f"ifa_calcium_consumption: {record.get('ifa_calcium_consumption')}",
+            referral_message_en=(
+                "EMERGENCY / HIGH RISK: Irregular pills / missed IFA and Calcium tablet doses reported during pregnancy. "
+                "Sharply increases maternal risk of severe nutritional anaemia, hemorrhage, and fetal complications. "
+                "Immediate adherence counselling, Hb screening, and PHC clinical evaluation required."
+            ),
+            referral_message_ta=(
+                "அவசரநிலை / அதிக ஆபத்து: கர்ப்ப காலத்தில் முறையற்ற மாத்திரைகள் / விடுபட்ட IFA & கால்சியம் மருந்துகள் உட்கொள்ளல். "
+                "கடுமையான ரத்த சோகை மற்றும் சிக்கல்களைத் தடுக்க உடனடியாக PHC மருத்துவரிடம் வழிகாட்டல் பெறவும்."
+            ),
+            source="WHO Antenatal Care Guidelines 2016; MoHFW Anemia Mukt Bharat",
+            disclaimer="This is a referral-support tool, not a diagnostic system. Always use clinical judgment.",
+        ))
+
+    # 3. Severe Headache / Blurred Vision
+    sh = str(record.get("severe_headache_blurred_vision") or "").strip().lower()
+    if sh in ("yes", "severe", "blurred vision", "headache") and not any(k in sh for k in ("no", "none", "nil")):
+        results.append(DangerSignResult(
+            rule_id="DS003",
+            category="severe_headache_vision",
+            name="Severe Headache / Blurred Vision (Pre-eclampsia Risk)",
+            severity="emergency",
+            detected=True,
+            is_negated=False,
+            is_historical=False,
+            is_hypothetical=False,
+            is_ambiguous=False,
+            matched_phrase="Severe Headache / Blurred Vision",
+            context_snippet=f"severe_headache_blurred_vision: {record.get('severe_headache_blurred_vision')}",
+            referral_message_en=(
+                "EMERGENCY: Severe headache or blurred vision during pregnancy may indicate pre-eclampsia. "
+                "Refer immediately to PHC. Do not wait."
+            ),
+            referral_message_ta="அவசரநிலை: கர்ப்ப காலத்தில் கடுமையான தலைவலி அல்லது மங்கலான பார்வை. உடனடியாக PHC-க்கு அனுப்பவும்.",
+            source="WHO Pregnancy, Childbirth, Postpartum and Newborn Care Guide, 2015, Section B6",
+            disclaimer="This is a referral-support tool, not a diagnostic system. Always use clinical judgment.",
+        ))
+
+    # 4. Fetal Movement
+    fm = str(record.get("fetal_movement") or "").strip().lower()
+    if fm in ("absent", "reduced", "no movement", "decreased"):
+        results.append(DangerSignResult(
+            rule_id="DS006",
+            category="fetal_distress",
+            name="Reduced / Absent Fetal Movement",
+            severity="emergency",
+            detected=True,
+            is_negated=False,
+            is_historical=False,
+            is_hypothetical=False,
+            is_ambiguous=False,
+            matched_phrase="Fetal Movement Absent/Reduced",
+            context_snippet=f"fetal_movement: {record.get('fetal_movement')}",
+            referral_message_en=(
+                "EMERGENCY: Reduced or absent fetal movement reported. Urgent fetal evaluation and PHC / hospital referral required immediately."
+            ),
+            referral_message_ta="அவசரநிலை: குழந்தையின் அசைவு குறைந்துள்ளது அல்லது இல்லை. உடனடியாக மருத்துவரிடம் செல்லவும்.",
+            source="WHO Antenatal Care Guidelines",
+            disclaimer="This is a referral-support tool, not a diagnostic system. Always use clinical judgment.",
+        ))
+
+    # 5. Elevated Blood Pressure (systolic >= 140 or diastolic >= 90)
+    sys_val = None
+    dia_val = None
+    try:
+        if record.get("blood_pressure_systolic"):
+            sys_val = int(record["blood_pressure_systolic"])
+        if record.get("blood_pressure_diastolic"):
+            dia_val = int(record["blood_pressure_diastolic"])
+        if not sys_val and record.get("blood_pressure"):
+            import re
+            m = re.search(r"(\d{2,3})\s*/\s*(\d{2,3})", str(record["blood_pressure"]))
+            if m:
+                sys_val, dia_val = int(m.group(1)), int(m.group(2))
+    except Exception:
+        pass
+
+    if (sys_val and sys_val >= 140) or (dia_val and dia_val >= 90):
+        results.append(DangerSignResult(
+            rule_id="DS007",
+            category="hypertension_preeclampsia",
+            name=f"Severe Hypertension ({sys_val or '?'}/{dia_val or '?'} mmHg)",
+            severity="emergency",
+            detected=True,
+            is_negated=False,
+            is_historical=False,
+            is_hypothetical=False,
+            is_ambiguous=False,
+            matched_phrase=f"High Blood Pressure {sys_val}/{dia_val}",
+            context_snippet=f"blood_pressure: {sys_val}/{dia_val}",
+            referral_message_en=(
+                "EMERGENCY: Blood pressure is dangerously elevated (>= 140/90 mmHg). High risk of pre-eclampsia. Immediate PHC referral required."
+            ),
+            referral_message_ta="அவசரநிலை: இரத்த அழுத்தம் மிக அதிகமாக உள்ளது. உடனடியாக மருத்துவமனைக்கு அனுப்பவும்.",
+            source="WHO Guidelines for Pre-eclampsia and Eclampsia",
+            disclaimer="This is a referral-support tool, not a diagnostic system. Always use clinical judgment.",
+        ))
+
+    # 6. Severe Anaemia (Hb < 7.0 g/dL)
+    try:
+        hb_val = float(record.get("hb_level")) if record.get("hb_level") is not None else None
+        if hb_val and hb_val < 7.0:
+            results.append(DangerSignResult(
+                rule_id="DS008",
+                category="severe_anaemia",
+                name=f"Severe Anaemia (Hb: {hb_val} g/dL)",
+                severity="emergency",
+                detected=True,
+                is_negated=False,
+                is_historical=False,
+                is_hypothetical=False,
+                is_ambiguous=False,
+                matched_phrase=f"Hb {hb_val} g/dL",
+                context_snippet=f"hb_level: {hb_val}",
+                referral_message_en=(
+                    "EMERGENCY: Severe anaemia detected (Hb < 7.0 g/dL). High risk of maternal cardiac failure and hemorrhage. Immediate hospital referral required."
+                ),
+                referral_message_ta="அவசரநிலை: கடுமையான ரத்த சோகை (Hb < 7 g/dL). உடனடியாக மருத்துவமனைக்கு அனுப்பவும்.",
+                source="MoHFW Anemia Mukt Bharat Guidelines",
+                disclaimer="This is a referral-support tool, not a diagnostic system. Always use clinical judgment.",
+            ))
+    except Exception:
+        pass
+
+    # Newborn-specific checks
+    if b_cat in ("newborn", "neonatal"):
+        if str(record.get("difficulty_in_feeding") or "").strip().lower() in ("yes", "true", "present"):
+            results.append(DangerSignResult(
+                rule_id="DS004",
+                category="neonatal_not_feeding",
+                name="Newborn Not Feeding / Inability to Latch",
+                severity="emergency",
+                detected=True,
+                is_negated=False,
+                is_historical=False,
+                is_hypothetical=False,
+                is_ambiguous=False,
+                matched_phrase="difficulty_in_feeding: Yes",
+                context_snippet="difficulty_in_feeding: Yes",
+                referral_message_en="EMERGENCY: Newborn unable to feed. Urgent evaluation at PHC required today.",
+                referral_message_ta="அவசரநிலை: குழந்தை பால் குடிக்கவில்லை. இன்றே PHC-க்கு அனுப்பவும்.",
+                source="IMNCI Guidelines, MoHFW",
+                disclaimer="This is a referral-support tool, not a diagnostic system. Always use clinical judgment.",
+            ))
+        if str(record.get("yellowing_skin_eyes") or "").strip().lower() in ("yes", "true", "present"):
+            results.append(DangerSignResult(
+                rule_id="DS009",
+                category="neonatal_jaundice",
+                name="Neonatal Jaundice (Yellowing Skin / Eyes)",
+                severity="emergency",
+                detected=True,
+                is_negated=False,
+                is_historical=False,
+                is_hypothetical=False,
+                is_ambiguous=False,
+                matched_phrase="yellowing_skin_eyes: Yes",
+                context_snippet="yellowing_skin_eyes: Yes",
+                referral_message_en="EMERGENCY: Noticeable jaundice in newborn. Immediate medical evaluation at PHC needed.",
+                referral_message_ta="அவசரநிலை: குழந்தைக்கு மஞ்சள் காமாலை அறிகுறி. உடனடியாக PHC-க்கு அனுப்பவும்.",
+                source="IMNCI Guidelines, MoHFW",
+                disclaimer="This is a referral-support tool, not a diagnostic system. Always use clinical judgment.",
+            ))
+        cord = str(record.get("umbilical_cord_condition") or "").strip().lower()
+        if any(k in cord for k in ("pus", "redness", "discharge", "smell", "foul")):
+            results.append(DangerSignResult(
+                rule_id="DS010",
+                category="neonatal_cord_infection",
+                name="Umbilical Cord Infection (Redness / Pus)",
+                severity="emergency",
+                detected=True,
+                is_negated=False,
+                is_historical=False,
+                is_hypothetical=False,
+                is_ambiguous=False,
+                matched_phrase="umbilical_cord_condition: Redness/Pus",
+                context_snippet=f"umbilical_cord_condition: {record.get('umbilical_cord_condition')}",
+                referral_message_en="EMERGENCY: Umbilical cord discharge or infection carries high risk of neonatal sepsis. Immediate PHC referral required.",
+                referral_message_ta="அவசரநிலை: தொப்புள் கொடி தொற்று. உடனடியாக PHC-க்கு அனுப்பவும்.",
+                source="IMNCI Guidelines, MoHFW",
+                disclaimer="This is a referral-support tool, not a diagnostic system. Always use clinical judgment.",
+            ))
+        try:
+            temp = float(record.get("temperature_celsius")) if record.get("temperature_celsius") is not None else None
+            if temp and temp >= 38.0:
+                results.append(DangerSignResult(
+                    rule_id="DS002",
+                    category="neonatal_fever",
+                    name=f"High Fever in Newborn ({temp}°C)",
+                    severity="emergency",
+                    detected=True,
+                    is_negated=False,
+                    is_historical=False,
+                    is_hypothetical=False,
+                    is_ambiguous=False,
+                    matched_phrase=f"Temperature {temp}°C",
+                    context_snippet=f"temperature_celsius: {temp}",
+                    referral_message_en="EMERGENCY: Newborn high fever requires immediate medical attention at nearest PHC.",
+                    referral_message_ta="அவசரநிலை: குழந்தைக்கு அதிக காய்ச்சல். உடனடியாக PHC-க்கு அனுப்பவும்.",
+                    source="IMNCI Guidelines, MoHFW",
+                    disclaimer="This is a referral-support tool, not a diagnostic system. Always use clinical judgment.",
+                ))
+        except Exception:
+            pass
+
+    return results

@@ -1,0 +1,207 @@
+{
+  "project": "ASHA Voice Machine Learning Module",
+  "algorithm": "RandomForestClassifier",
+  "random_state": 42,
+  "clinical_safety_notice": "EXPERIMENTAL ADVISORY ONLY. These models were trained on synthetic, clinically unvalidated datasets. Danger_Flag = 1 indicates general clinical/growth/schedule concern, not strictly emergency danger signs. The model output is NOT a medical diagnosis and MUST NEVER override or downgrade deterministic clinical danger alerts.",
+  "models": {
+    "pregnancy": {
+      "dataset": "pregnancy",
+      "model_artifact": "pregnancy_rf_model.joblib",
+      "num_features": [
+        "Gestational_Age_Weeks",
+        "Pre_Pregnancy_BMI",
+        "Current_Weight_kg",
+        "Systolic_BP_mmHg",
+        "Diastolic_BP_mmHg",
+        "Haemoglobin_g_dL",
+        "Blood_Sugar_mg_dL",
+        "BP_Reading_Interval_Min",
+        "Glucose_Load_Grams",
+        "Time_After_Glucose_Load_Hr"
+      ],
+      "cat_features": [
+        "Vaginal_Bleeding",
+        "Severe_Headache_or_Blurred_Vision",
+        "Fetal_Movement",
+        "IFA_Calcium_Consumption",
+        "BP_Repeat_Status",
+        "Blood_Sugar_Test_Context",
+        "Blood_Sugar_Sample_Type",
+        "Weight_Context_Status"
+      ],
+      "metrics": {
+        "accuracy": 0.9451,
+        "precision": 1.0,
+        "recall_sensitivity": 0.8837,
+        "specificity": 1.0,
+        "f1_score": 0.9383,
+        "false_negatives": 5,
+        "confusion_matrix": {
+          "true_negatives": 48,
+          "false_positives": 0,
+          "false_negatives": 5,
+          "true_positives": 38
+        }
+      },
+      "top_5_features": [
+        {
+          "feature": "Haemoglobin_g_dL",
+          "importance": 0.1495
+        },
+        {
+          "feature": "Fetal_Movement_Absent",
+          "importance": 0.1017
+        },
+        {
+          "feature": "Diastolic_BP_mmHg",
+          "importance": 0.0857
+        },
+        {
+          "feature": "BP_Repeat_Status_Not Required",
+          "importance": 0.0835
+        },
+        {
+          "feature": "Blood_Sugar_mg_dL",
+          "importance": 0.0695
+        }
+      ]
+    },
+    "newborn": {
+      "dataset": "newborn",
+      "model_artifact": "newborn_rf_model.joblib",
+      "num_features": [
+        "Age_Days",
+        "Birth_Weight_kg",
+        "Current_Weight_kg",
+        "Body_Temperature_C",
+        "Respiratory_Rate_bpm"
+      ],
+      "cat_features": [
+        "Breastfeeding_Status",
+        "Difficulty_in_Feeding",
+        "Difficulty_in_Breathing",
+        "Yellowing_of_Skin_or_Eyes",
+        "Umbilical_Cord_Condition",
+        "Temp_Measurement_Method"
+      ],
+      "metrics": {
+        "accuracy": 0.974,
+        "precision": 1.0,
+        "recall_sensitivity": 0.9412,
+        "specificity": 1.0,
+        "f1_score": 0.9697,
+        "false_negatives": 2,
+        "confusion_matrix": {
+          "true_negatives": 43,
+          "false_positives": 0,
+          "false_negatives": 2,
+          "true_positives": 32
+        }
+      },
+      "top_5_features": [
+        {
+          "feature": "Body_Temperature_C",
+          "importance": 0.1921
+        },
+        {
+          "feature": "Yellowing_of_Skin_or_Eyes_No",
+          "importance": 0.1127
+        },
+        {
+          "feature": "Yellowing_of_Skin_or_Eyes_Yes",
+          "importance": 0.1042
+        },
+        {
+          "feature": "Respiratory_Rate_bpm",
+          "importance": 0.0932
+        },
+        {
+          "feature": "Birth_Weight_kg",
+          "importance": 0.0919
+        }
+      ]
+    },
+    "immunization": {
+      "dataset": "immunization",
+      "model_artifact": "immunization_rf_model.joblib",
+      "num_features": [
+        "Age_Months",
+        "Current_Weight_kg",
+        "Current_Height_Length_cm",
+        "WAZ_Score",
+        "HAZ_Score",
+        "WHZ_Score",
+        "count_vaccines_due",
+        "count_vaccines_given",
+        "dose_deficit_count",
+        "vaccines_deferred",
+        "has_overdue_vaccine",
+        "due_bcg",
+        "given_bcg",
+        "due_opv",
+        "given_opv",
+        "due_hepb",
+        "given_hepb",
+        "due_pentavalent",
+        "given_pentavalent",
+        "due_rotavirus",
+        "given_rotavirus",
+        "due_fipv",
+        "given_fipv",
+        "due_pcv",
+        "given_pcv",
+        "due_mr",
+        "given_mr",
+        "due_je",
+        "given_je",
+        "due_vitamin_a",
+        "given_vitamin_a",
+        "due_dpt",
+        "given_dpt"
+      ],
+      "cat_features": [
+        "Gender",
+        "General_Health_Condition",
+        "Missed_Vaccination_Doses",
+        "Previous_AEFI",
+        "Growth_Reference_Indicator"
+      ],
+      "metrics": {
+        "accuracy": 0.9889,
+        "precision": 1.0,
+        "recall_sensitivity": 0.9767,
+        "specificity": 1.0,
+        "f1_score": 0.9882,
+        "false_negatives": 1,
+        "confusion_matrix": {
+          "true_negatives": 47,
+          "false_positives": 0,
+          "false_negatives": 1,
+          "true_positives": 42
+        }
+      },
+      "top_5_features": [
+        {
+          "feature": "WAZ_Score",
+          "importance": 0.168
+        },
+        {
+          "feature": "Missed_Vaccination_Doses_Yes",
+          "importance": 0.1062
+        },
+        {
+          "feature": "HAZ_Score",
+          "importance": 0.1022
+        },
+        {
+          "feature": "Missed_Vaccination_Doses_No",
+          "importance": 0.083
+        },
+        {
+          "feature": "count_vaccines_given",
+          "importance": 0.0692
+        }
+      ]
+    }
+  }
+}

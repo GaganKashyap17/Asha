@@ -52,6 +52,9 @@ export default function LandingPage() {
           </div>
           <span className="font-bold text-green-900 text-xl">ASHA Voice</span>
           <div className="flex-1" />
+          <Link to="/signup" className="px-4 py-2 border border-green-600 text-green-700 rounded-xl text-sm font-semibold hover:bg-green-50 transition-colors mr-2">
+            Sign Up
+          </Link>
           <Link to="/login" className="px-5 py-2 bg-green-700 text-white rounded-xl text-sm font-semibold hover:bg-green-800 transition-colors">
             Login
           </Link>
@@ -74,12 +77,12 @@ export default function LandingPage() {
             AI-powered voice assistant for ASHA healthcare workers. Record home visits in Tamil or English — no typing needed.
           </p>
           <div className="flex flex-wrap gap-3">
-            <Link to="/login" className="px-6 py-3 bg-green-700 text-white rounded-xl font-semibold hover:bg-green-800 transition-colors shadow-md">
-              Get Started →
+            <Link to="/signup" className="px-6 py-3 bg-green-700 text-white rounded-xl font-semibold hover:bg-green-800 transition-colors shadow-md">
+              Sign Up as Worker →
             </Link>
-            <a href="#how-it-works" className="px-6 py-3 border border-green-300 text-green-700 rounded-xl font-semibold hover:bg-green-50 transition-colors">
-              How It Works
-            </a>
+            <Link to="/login" className="px-6 py-3 border border-green-400 text-green-700 rounded-xl font-semibold hover:bg-green-50 transition-colors">
+              Sign In
+            </Link>
           </div>
         </div>
         <div className="relative">

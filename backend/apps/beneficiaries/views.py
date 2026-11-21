@@ -58,6 +58,12 @@ def beneficiary_list_create(request):
         # ── 1. Category-Based Mandatory Field & Rule Validation ──────────
         val_result = validate_beneficiary_data(beneficiary_type, data, check_mother_exists=True)
         if not val_result["is_valid"]:
+            logger.warning(
+                f"Registration validation failed for {beneficiary_type}: "
+                f"missing={val_result['missing_mandatory']}, "
+                f"errors={val_result['validation_errors']}, "
+                f"inconsistencies={val_result['inconsistencies']}"
+            )
             return Response(
                 {
                     "error": f"Mandatory validation failed for category '{beneficiary_type}'",
@@ -550,25 +556,11 @@ def beneficiary_extract_field(request):
 def beneficiary_lookup(request, beneficiary_id):
     """
     Lookup for revisit identity verification.
-    Matches by Beneficiary ID (case-insensitive) or by Name!
+    Matches by Beneficiary ID (case-insensitive, zero-padding insensitive) or by Name!
     """
-    import re
+    from services.beneficiary_validation_service import normalize_and_find_beneficiary
     query_id = beneficiary_id.strip()
-    beneficiary = mongodb_service.find_one("beneficiaries", {
-        "$or": [
-            {"beneficiary_id": query_id.upper()},
-            {"name": {"$regex": f"^{re.escape(query_id)}$", "$options": "i"}},
-        ],
-        "is_deleted": {"$ne": True},
-    })
-    if not beneficiary:
-        # Also try partial name search
-        all_b = mongodb_service.find_all("beneficiaries", {"is_deleted": {"$ne": True}})
-        for b in all_b:
-            if query_id.lower() in b.get("name", "").lower() or query_id.upper() in b.get("beneficiary_id", "").upper():
-                beneficiary = b
-                break
-                
+    beneficiary = normalize_and_find_beneficiary(query_id)
     if not beneficiary:
         return Response({
             "found": False,

@@ -162,6 +162,28 @@ class GnaniService:
                 "error": f"Gnani TTS request failed: {type(e).__name__}",
             }
 
+    def _post_stt_request(self, chunk_bytes: bytes, filename: str, lang_code: str) -> str:
+        """Helper to send a single multipart audio segment to Gnani Prisma v3.0 REST endpoint."""
+        boundary = "----WebKitFormBoundaryAshaVoiceGnani7MA4"
+        body = bytearray()
+        body.extend(f'--{boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n{self._stt_model}\r\n'.encode('utf-8'))
+        body.extend(f'--{boundary}\r\nContent-Disposition: form-data; name="language_code"\r\n\r\n{lang_code}\r\n'.encode('utf-8'))
+        body.extend(f'--{boundary}\r\nContent-Disposition: form-data; name="audio_file"; filename="{filename}"\r\nContent-Type: audio/wav\r\n\r\n'.encode('utf-8'))
+        body.extend(chunk_bytes)
+        body.extend(f'\r\n--{boundary}--\r\n'.encode('utf-8'))
+
+        headers = {
+            "X-API-Key-ID": self._api_key,
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "User-Agent": USER_AGENT,
+        }
+
+        req = urllib.request.Request(self._stt_rest_url, data=body, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            resp_text = resp.read().decode("utf-8")
+            data = json.loads(resp_text)
+            return (data.get("transcript") or data.get("text") or "").strip()
+
     def transcribe_audio(
         self,
         audio_file: Union[bytes, object],
@@ -169,6 +191,7 @@ class GnaniService:
     ) -> dict:
         """
         Transcribe audio directly using Gnani Prisma v3.0 STT endpoint (https://api.vachana.ai/stt/v3).
+        Automatically chunks audio exceeding 24 seconds to support extended recordings seamlessly.
         """
         if not self.is_configured:
             return {
@@ -199,63 +222,86 @@ class GnaniService:
         lang_cfg = TIMBRE_VOICES.get(language, {"locale": "indic-auto"})
         lang_code = lang_cfg.get("locale", "indic-auto")
 
-        boundary = "----WebKitFormBoundaryAshaVoiceGnani7MA4"
-        body = bytearray()
-        body.extend(f'--{boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n{self._stt_model}\r\n'.encode('utf-8'))
-        body.extend(f'--{boundary}\r\nContent-Disposition: form-data; name="language_code"\r\n\r\n{lang_code}\r\n'.encode('utf-8'))
-        body.extend(f'--{boundary}\r\nContent-Disposition: form-data; name="audio_file"; filename="{filename}"\r\nContent-Type: audio/wav\r\n\r\n'.encode('utf-8'))
-        body.extend(audio_bytes)
-        body.extend(f'\r\n--{boundary}--\r\n'.encode('utf-8'))
-
-        headers = {
-            "X-API-Key-ID": self._api_key,
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "User-Agent": USER_AGENT,
-        }
+        # Automatically check and split long WAV audio (>24s) to eliminate MAX_AUDIO_DURATION_EXCEEDED
+        chunks = [audio_bytes]
+        if isinstance(audio_bytes, (bytes, bytearray)) and audio_bytes.startswith(b"RIFF"):
+            try:
+                import wave
+                import io
+                with wave.open(io.BytesIO(audio_bytes), "rb") as r:
+                    framerate = r.getframerate()
+                    n_frames = r.getnframes()
+                    duration = n_frames / float(framerate) if framerate > 0 else 0
+                    if duration > 24.0:
+                        logger.info(f"Audio duration is {duration:.1f}s (>24s). Splitting into 22s chunks for Gnani Prisma STT.")
+                        chunk_frames = int(22.0 * framerate)
+                        params = r.getparams()
+                        chunks = []
+                        while True:
+                            frames = r.readframes(chunk_frames)
+                            if not frames:
+                                break
+                            c_buf = io.BytesIO()
+                            with wave.open(c_buf, "wb") as cw:
+                                cw.setparams(params)
+                                cw.writeframes(frames)
+                            chunks.append(c_buf.getvalue())
+            except Exception as ex:
+                logger.warning(f"Could not inspect/split WAV duration: {ex}")
+                chunks = [audio_bytes]
 
         try:
-            req = urllib.request.Request(self._stt_rest_url, data=body, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                resp_text = resp.read().decode("utf-8")
-                data = json.loads(resp_text)
-                transcript = data.get("transcript") or data.get("text") or ""
-                logger.info(f"Gnani Prisma v3.0 STT transcribed {len(transcript)} chars in language {lang_code}")
-                return {
-                    "transcript": transcript.strip(),
-                    "language": language,
-                    "provider": "gnani_prisma_v3",
-                    "error": None,
-                }
+            transcripts = []
+            for idx, c_bytes in enumerate(chunks):
+                chunk_name = f"chunk_{idx+1}_{filename}" if len(chunks) > 1 else filename
+                text_part = self._post_stt_request(c_bytes, chunk_name, lang_code)
+                if text_part:
+                    transcripts.append(text_part)
+
+            full_transcript = " ".join(transcripts).strip()
+            logger.info(f"Gnani Prisma v3.0 STT transcribed {len(full_transcript)} chars across {len(chunks)} chunk(s) in {lang_code}")
+            return {
+                "transcript": full_transcript,
+                "language": language,
+                "provider": "gnani_prisma_v3",
+                "error": None,
+            }
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", errors="replace")
             logger.error(f"Gnani Prisma STT HTTP {e.code}: {self._redact(err_body)}")
-            # Fallback to speech_service if container or audio codec mismatch
+            # Fallback to speech_service (Groq Whisper)
             try:
                 from services.speech_service import speech_service
                 res = speech_service.transcribe_audio(audio_bytes, language)
-                res["provider"] = "gnani_prisma_v3"
-                return res
-            except Exception:
-                return {
-                    "transcript": "",
-                    "language": language,
-                    "provider": "gnani_prisma_v3",
-                    "error": f"Prisma STT error: HTTP {e.code}",
-                }
+                if res.get("transcript"):
+                    res["provider"] = "gnani_prisma_v3"
+                    return res
+            except Exception as ex:
+                logger.warning(f"Fallback speech_service error: {ex}")
+
+            return {
+                "transcript": "",
+                "language": language,
+                "provider": "gnani_prisma_v3",
+                "error": f"Prisma STT error: HTTP {e.code}",
+            }
         except Exception as e:
             logger.error(f"Gnani Prisma STT request failed: {type(e).__name__}")
             try:
                 from services.speech_service import speech_service
                 res = speech_service.transcribe_audio(audio_bytes, language)
-                res["provider"] = "gnani_prisma_v3"
-                return res
-            except Exception:
-                return {
-                    "transcript": "",
-                    "language": language,
-                    "provider": "gnani_prisma_v3",
-                    "error": f"Prisma STT request failed: {type(e).__name__}",
-                }
+                if res.get("transcript"):
+                    res["provider"] = "gnani_prisma_v3"
+                    return res
+            except Exception as ex:
+                logger.warning(f"Fallback speech_service error: {ex}")
+
+            return {
+                "transcript": "",
+                "language": language,
+                "provider": "gnani_prisma_v3",
+                "error": f"Prisma STT request failed: {type(e).__name__}",
+            }
 
 
 # Singleton

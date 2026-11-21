@@ -90,3 +90,29 @@ class TestReferralMessages:
         assert len(confirmed) > 0
         assert "PHC" in confirmed[0].referral_message_en
         assert confirmed[0].disclaimer != ""
+
+
+class TestIrregularPillsAndPresenceOfBleeding:
+    def test_presence_of_bleeding(self):
+        results = detect_danger_signs("Presence of bleeding in pregnancy", "pregnancy")
+        assert any(r.detected and r.rule_id == "DS001" and r.severity == "emergency" for r in results)
+
+    def test_irregular_pills(self):
+        results = detect_danger_signs("Patient is taking irregular pills", "pregnancy")
+        assert any(r.detected and r.rule_id == "DS005" and r.severity == "emergency" for r in results)
+
+    def test_presence_of_bleeding_and_irregular_pills_emergency(self):
+        results = detect_danger_signs("Presence of bleeding, irregular pills", "pregnancy")
+        assert any(r.detected and r.rule_id == "DS001" for r in results)
+        assert any(r.detected and r.rule_id == "DS005" for r in results)
+
+    def test_record_based_danger_signs(self):
+        from services.danger_detection_service import detect_danger_signs_from_record
+        record = {
+            "vaginal_bleeding": "Yes",
+            "ifa_calcium_consumption": "Irregular / Missed Doses",
+        }
+        res = detect_danger_signs_from_record(record, "pregnant_woman")
+        assert len(res) == 2
+        assert any(r.rule_id == "DS001" and r.severity == "emergency" for r in res)
+        assert any(r.rule_id == "DS005" and r.severity == "emergency" for r in res)

@@ -1,0 +1,63 @@
+{
+  "dataset": "immunization",
+  "train_samples": 316,
+  "test_samples": 90,
+  "train_beneficiaries": 184,
+  "test_beneficiaries": 47,
+  "accuracy": 0.9889,
+  "precision": 1.0,
+  "recall_sensitivity": 0.9767,
+  "specificity": 1.0,
+  "f1_score": 0.9882,
+  "confusion_matrix": {
+    "true_negatives": 47,
+    "false_positives": 0,
+    "false_negatives": 1,
+    "true_positives": 42
+  },
+  "false_negative_count": 1,
+  "false_positive_count": 0,
+  "classification_report": "                       precision    recall  f1-score   support\n\nStandard/Low Risk (0)       0.98      1.00      0.99        47\n Clinical Concern (1)       1.00      0.98      0.99        43\n\n             accuracy                           0.99        90\n            macro avg       0.99      0.99      0.99        90\n         weighted avg       0.99      0.99      0.99        90\n",
+  "top_10_features": [
+    {
+      "feature": "WAZ_Score",
+      "importance": 0.168
+    },
+    {
+      "feature": "Missed_Vaccination_Doses_Yes",
+      "importance": 0.1062
+    },
+    {
+      "feature": "HAZ_Score",
+      "importance": 0.1022
+    },
+    {
+      "feature": "Missed_Vaccination_Doses_No",
+      "importance": 0.083
+    },
+    {
+      "feature": "count_vaccines_given",
+      "importance": 0.0692
+    },
+    {
+      "feature": "dose_deficit_count",
+      "importance": 0.0629
+    },
+    {
+      "feature": "Current_Weight_kg",
+      "importance": 0.0554
+    },
+    {
+      "feature": "has_overdue_vaccine",
+      "importance": 0.0432
+    },
+    {
+      "feature": "Current_Height_Length_cm",
+      "importance": 0.042
+    },
+    {
+      "feature": "Previous_AEFI_Reported",
+      "importance": 0.0345
+    }
+  ]
+}
