@@ -27,7 +27,7 @@ DEBUG = os.environ.get('DEBUG', 'True').lower() == 'true'
 
 ALLOWED_HOSTS = os.environ.get(
     'ALLOWED_HOSTS',
-    'localhost,127.0.0.1,asha-44t7.onrender.com'
+    'localhost,127.0.0.1,testserver,asha-44t7.onrender.com'
 ).split(',')
 
 # Application definition
@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'apps.danger_alerts',
     'apps.analytics',
     'apps.ml',
+    'apps.ivr',
 ]
 
 MIDDLEWARE = [

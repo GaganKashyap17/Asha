@@ -51,7 +51,8 @@ class MongoDBService:
 
     COLLECTIONS = [
         'users', 'beneficiaries', 'visits',
-        'followups', 'danger_alerts', 'voice_sessions', 'audit_logs'
+        'followups', 'danger_alerts', 'voice_sessions', 'audit_logs',
+        'ivr_calls'
     ]
 
     def __new__(cls):
@@ -109,6 +110,7 @@ class MongoDBService:
     def _use_memory_fallback(self):
         self._memory_store = {col: [] for col in self.COLLECTIONS}
         self._custom_memory_stores = {}
+        self._seed_default_memory_data()
         self._db = None
         self._connected = False
         logger.info("Using in-memory store (demo mode)")
@@ -128,6 +130,9 @@ class MongoDBService:
             db.followups.create_index([("status", ASCENDING)])
             db.danger_alerts.create_index([("beneficiary_id", ASCENDING)])
             db.danger_alerts.create_index([("created_at", ASCENDING)])
+            db.ivr_calls.create_index([("call_id", ASCENDING)], unique=True)
+            db.ivr_calls.create_index([("initiated_at", ASCENDING)])
+            db.ivr_calls.create_index([("mobile_number", ASCENDING)])
         except Exception as e:
             logger.error(f"Index creation failed: {type(e).__name__}")
 
@@ -221,8 +226,13 @@ class MongoDBService:
         query = query or {}
         db = self._get_db(collection)
         if db is not None:
-            cursor = db[collection].find(query, {'_id': 0}).limit(limit)
-            return list(cursor)
+            cursor = db[collection].find(query).limit(limit)
+            docs = []
+            for doc in cursor:
+                if '_id' in doc:
+                    doc['_id'] = str(doc['_id'])
+                docs.append(doc)
+            return docs
         mem = self._get_memory_store(collection)
         items = mem.get(collection, [])
         if query:
@@ -233,7 +243,17 @@ class MongoDBService:
         self.ensure_connected()
         db = self._get_db(collection)
         if db is not None:
-            doc = db[collection].find_one(query, {'_id': 0})
+            q = query.copy() if query else {}
+            if "_id" in q and isinstance(q["_id"], str) and PYMONGO_AVAILABLE:
+                try:
+                    from bson import ObjectId
+                    if ObjectId.is_valid(q["_id"]):
+                        q = {"$or": [{"_id": q["_id"]}, {"_id": ObjectId(q["_id"])}]}
+                except Exception:
+                    pass
+            doc = db[collection].find_one(q)
+            if doc and '_id' in doc:
+                doc['_id'] = str(doc['_id'])
             return doc
         mem = self._get_memory_store(collection)
         for item in mem.get(collection, []):
@@ -247,8 +267,16 @@ class MongoDBService:
         update_data['updated_at'] = datetime.now(timezone.utc).isoformat()
         db = self._get_db(collection)
         if db is not None:
-            result = db[collection].update_one(query, {'$set': update_data})
-            return result.modified_count > 0
+            q = query.copy() if query else {}
+            if "_id" in q and isinstance(q["_id"], str) and PYMONGO_AVAILABLE:
+                try:
+                    from bson import ObjectId
+                    if ObjectId.is_valid(q["_id"]):
+                        q = {"$or": [{"_id": q["_id"]}, {"_id": ObjectId(q["_id"])}]}
+                except Exception:
+                    pass
+            result = db[collection].update_one(q, {'$set': update_data})
+            return result.modified_count > 0 or result.matched_count > 0
         mem = self._get_memory_store(collection)
         for item in mem.get(collection, []):
             if self._matches(item, query):
@@ -301,8 +329,292 @@ class MongoDBService:
     def _ensure_memory(self):
         if self._memory_store is None:
             self._memory_store = {col: [] for col in self.COLLECTIONS}
+            self._seed_default_memory_data()
         if self._custom_memory_stores is None:
             self._custom_memory_stores = {}
+
+    def _seed_default_memory_data(self):
+        """Pre-seeds the 5 tomorrow revisit beneficiaries and matching follow-ups."""
+        if not self._memory_store:
+            return
+        tomorrow = '2026-11-23'
+        seed_b = [
+            {
+                'beneficiary_id': 'PREG-2026-000001',
+                'name': 'Priya Rajan',
+                'phone': '7339223026',
+                'village': 'Gandhi Nagar',
+                'household': 'H-12',
+                'age': 24,
+                'gender': 'female',
+                'pregnancy_status': 'pregnant',
+                'pregnancy_month': 8,
+                'expected_delivery_date': '2027-01-18',
+                'last_visit_date': '2026-11-08',
+                'next_visit_date': tomorrow,
+                'visit_type': 'ANC Check-up / Maternal Vitals',
+                'priority': 'high',
+                'notes': 'Scheduled for ANC 3rd trimester revisit tomorrow — BP and Hb check',
+                'asha_worker_id': 'ASHA001',
+                'is_deleted': False,
+            },
+            {
+                'beneficiary_id': 'PREG-2026-000002',
+                'name': 'Ananya Sharma',
+                'phone': '8056413568',
+                'village': 'Anna Nagar',
+                'household': 'H-05',
+                'age': 26,
+                'gender': 'female',
+                'pregnancy_status': 'pregnant',
+                'pregnancy_month': 7,
+                'expected_delivery_date': '2027-02-15',
+                'last_visit_date': '2026-11-09',
+                'next_visit_date': tomorrow,
+                'visit_type': 'High Risk ANC Follow-up',
+                'priority': 'emergency',
+                'notes': 'Scheduled for pre-eclampsia follow-up revisit tomorrow — blood pressure monitoring',
+                'asha_worker_id': 'ASHA001',
+                'is_deleted': False,
+            },
+            {
+                'beneficiary_id': 'IMM-2026-000001',
+                'name': 'Kavitha Murugan',
+                'phone': '9876543210',
+                'village': 'Subhash Nagar',
+                'household': 'H-23',
+                'age': 1,
+                'gender': 'female',
+                'pregnancy_status': 'child',
+                'last_visit_date': '2026-10-23',
+                'next_visit_date': tomorrow,
+                'visit_type': 'Child Immunization Revisit',
+                'priority': 'high',
+                'notes': 'Child vaccination due tomorrow — Pentavalent-1 and OPV booster dose',
+                'asha_worker_id': 'ASHA001',
+                'is_deleted': False,
+            },
+            {
+                'beneficiary_id': 'NEWB-2026-000001',
+                'name': 'Sumathi Devi',
+                'phone': '8765432109',
+                'village': 'Nehru Street',
+                'household': 'H-18',
+                'age': 0,
+                'gender': 'female',
+                'pregnancy_status': 'postnatal',
+                'newborn_age_days': 14,
+                'last_visit_date': '2026-11-16',
+                'next_visit_date': tomorrow,
+                'visit_type': 'Newborn Postnatal Revisit',
+                'priority': 'medium',
+                'notes': 'Scheduled for 14-day newborn health, breastfeeding & temperature revisit tomorrow',
+                'asha_worker_id': 'ASHA001',
+                'is_deleted': False,
+            },
+            {
+                'beneficiary_id': 'PREG-2026-000003',
+                'name': 'Meena Krishnan',
+                'phone': '7654321098',
+                'village': 'Ramanathapuram',
+                'household': 'H-09',
+                'age': 28,
+                'gender': 'female',
+                'pregnancy_status': 'pregnant',
+                'pregnancy_month': 6,
+                'expected_delivery_date': '2027-03-12',
+                'last_visit_date': '2026-10-25',
+                'next_visit_date': tomorrow,
+                'visit_type': 'Maternal Nutrition & IFA Revisit',
+                'priority': 'medium',
+                'notes': 'Scheduled for gestational blood sugar review and IFA tablet replenishment revisit tomorrow',
+                'asha_worker_id': 'ASHA001',
+                'is_deleted': False,
+            },
+        ]
+        seed_f = [
+            {
+                '_id': 'fu-2026-001',
+                'beneficiary_id': 'PREG-2026-000001',
+                'beneficiary_name': 'Priya Rajan',
+                'mobile_number': '7339223026',
+                'phone': '7339223026',
+                'village': 'Gandhi Nagar',
+                'household': 'H-12',
+                'visit_type': 'ANC Check-up / Maternal Vitals',
+                'due_date': tomorrow,
+                'priority': 'high',
+                'status': 'pending',
+                'notes': 'Scheduled for ANC 3rd trimester revisit tomorrow — BP and Hb check',
+                'danger_flag': False,
+            },
+            {
+                '_id': 'fu-2026-002',
+                'beneficiary_id': 'PREG-2026-000002',
+                'beneficiary_name': 'Ananya Sharma',
+                'mobile_number': '8056413568',
+                'phone': '8056413568',
+                'village': 'Anna Nagar',
+                'household': 'H-05',
+                'visit_type': 'High Risk ANC Follow-up',
+                'due_date': tomorrow,
+                'priority': 'emergency',
+                'status': 'pending',
+                'notes': 'Scheduled for pre-eclampsia follow-up revisit tomorrow — blood pressure monitoring',
+                'danger_flag': True,
+            },
+            {
+                '_id': 'fu-2026-003',
+                'beneficiary_id': 'IMM-2026-000001',
+                'beneficiary_name': 'Kavitha Murugan',
+                'mobile_number': '9876543210',
+                'phone': '9876543210',
+                'village': 'Subhash Nagar',
+                'household': 'H-23',
+                'visit_type': 'Child Immunization Revisit',
+                'due_date': tomorrow,
+                'priority': 'high',
+                'status': 'pending',
+                'notes': 'Child vaccination due tomorrow — Pentavalent-1 and OPV booster dose',
+                'danger_flag': False,
+            },
+            {
+                '_id': 'fu-2026-004',
+                'beneficiary_id': 'NEWB-2026-000001',
+                'beneficiary_name': 'Sumathi Devi',
+                'mobile_number': '8765432109',
+                'phone': '8765432109',
+                'village': 'Nehru Street',
+                'household': 'H-18',
+                'visit_type': 'Newborn Postnatal Revisit',
+                'due_date': tomorrow,
+                'priority': 'medium',
+                'status': 'pending',
+                'notes': 'Scheduled for 14-day newborn health, breastfeeding & temperature revisit tomorrow',
+                'danger_flag': False,
+            },
+            {
+                '_id': 'fu-2026-005',
+                'beneficiary_id': 'PREG-2026-000003',
+                'beneficiary_name': 'Meena Krishnan',
+                'mobile_number': '7654321098',
+                'phone': '7654321098',
+                'village': 'Ramanathapuram',
+                'household': 'H-09',
+                'visit_type': 'Maternal Nutrition & IFA Revisit',
+                'due_date': tomorrow,
+                'priority': 'medium',
+                'status': 'pending',
+                'notes': 'Scheduled for gestational blood sugar review and IFA tablet replenishment revisit tomorrow',
+                'danger_flag': False,
+            },
+        ]
+        b_store = self._memory_store.setdefault('beneficiaries', [])
+        for b in seed_b:
+            if not any(x.get('beneficiary_id') == b['beneficiary_id'] for x in b_store):
+                b_store.append(b)
+        f_store = self._memory_store.setdefault('followups', [])
+        for f in seed_f:
+            if not any(x.get('_id') == f['_id'] for x in f_store):
+                f_store.append(f)
+
+        seed_alerts = [
+            {
+                '_id': 'alt-2026-001',
+                'beneficiary_id': 'PREG-2026-000002',
+                'beneficiary_name': 'Ananya Sharma',
+                'phone': '8056413568',
+                'village': 'Anna Nagar',
+                'household': 'H-05',
+                'visit_type': 'High Risk ANC Follow-up',
+                'danger_signs': ['Severe headache or blurred vision (possible pre-eclampsia)', 'High Blood Pressure (145/95 mmHg)'],
+                'danger_details': [
+                    {'rule_id': 'DS003', 'name': 'Severe headache or blurred vision (possible pre-eclampsia)', 'severity': 'emergency'}
+                ],
+                'referral_status': 'pending',
+                'resolved': False,
+                'created_at': '2026-11-22T08:00:00Z',
+            },
+            {
+                '_id': 'alt-2026-002',
+                'beneficiary_id': 'PREG-000003',
+                'beneficiary_name': 'Nithya',
+                'phone': '9876543211',
+                'village': 'Gandhi Nagar',
+                'household': 'H-08',
+                'visit_type': 'Pregnancy Revisit',
+                'danger_signs': ['Bleeding during pregnancy', 'Severe headache or blurred vision (possible pre-eclampsia)'],
+                'danger_details': [
+                    {'rule_id': 'DS001', 'name': 'Bleeding during pregnancy', 'severity': 'emergency'}
+                ],
+                'referral_status': 'pending',
+                'resolved': False,
+                'created_at': '2026-11-21T14:30:00Z',
+            },
+            {
+                '_id': 'alt-2026-003',
+                'beneficiary_id': 'NEWB-000002',
+                'beneficiary_name': 'Darshan',
+                'phone': '9876543212',
+                'village': 'Nehru Street',
+                'household': 'H-14',
+                'visit_type': 'Newborn Postnatal Revisit',
+                'danger_signs': ['High Fever in Newborn (38.9°C)', 'Inability to Latch / Feeding Difficulty'],
+                'danger_details': [
+                    {'rule_id': 'DS002', 'name': 'High fever in newborn', 'severity': 'emergency'}
+                ],
+                'referral_status': 'pending',
+                'resolved': False,
+                'created_at': '2026-11-21T16:00:00Z',
+            },
+        ]
+        a_store = self._memory_store.setdefault('danger_alerts', [])
+        for a in seed_alerts:
+            if not any(x.get('_id') == a['_id'] for x in a_store):
+                a_store.append(a)
+
+        seed_ivr_calls = [
+            {
+                '_id': 'ivr-call-2026-002',
+                'call_id': 'call-2026-002',
+                'beneficiary_id': 'PREG-2026-000002',
+                'beneficiary_name': 'Ananya Sharma',
+                'mobile_number': '8056413568',
+                'visit_date': tomorrow,
+                'visit_type': 'High Risk ANC Follow-up',
+                'language': 'en',
+                'reminder_message': 'Hello! This is a reminder from your local ASHA worker. Your ASHA worker is scheduled to visit you on 2026-11-23 for High Risk ANC Follow-up. Please be available at home. Thank you.',
+                'status': 'completed',
+                'outcome': 'Reminder played successfully',
+                'initiated_at': '2026-11-22T04:15:00Z',
+                'completed_at': '2026-11-22T04:15:28Z',
+                'duration_seconds': 28,
+                'followup_id': 'fu-2026-002',
+                'is_demo': True,
+            },
+            {
+                '_id': 'ivr-call-2026-001',
+                'call_id': 'call-2026-001',
+                'beneficiary_id': 'PREG-2026-000001',
+                'beneficiary_name': 'Priya Rajan',
+                'mobile_number': '7339223026',
+                'visit_date': tomorrow,
+                'visit_type': 'ANC Check-up / Maternal Vitals',
+                'language': 'ta',
+                'reminder_message': 'வணக்கம்! இது உங்கள் உள்ளூர் ASHA பணியாளரிடமிருந்து ஒரு நினைவூட்டல். உங்கள் ASHA பணியாளர் 2026-11-23 அன்று ANC Check-up க்காக உங்களை சந்திக்க வருவார்கள். தயவுசெய்து வீட்டில் இருங்கள். நன்றி.',
+                'status': 'completed',
+                'outcome': 'Reminder played successfully',
+                'initiated_at': '2026-11-22T03:00:00Z',
+                'completed_at': '2026-11-22T03:00:32Z',
+                'duration_seconds': 32,
+                'followup_id': 'fu-2026-001',
+                'is_demo': True,
+            },
+        ]
+        c_store = self._memory_store.setdefault('ivr_calls', [])
+        for c in seed_ivr_calls:
+            if not any(x.get('call_id') == c['call_id'] for x in c_store):
+                c_store.append(c)
 
     @classmethod
     def _matches(cls, item: dict, query: dict) -> bool:

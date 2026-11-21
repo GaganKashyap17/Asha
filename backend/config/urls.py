@@ -3,13 +3,6 @@ URL configuration for ASHA Voice backend.
 """
 from django.urls import path, include
 from django.http import JsonResponse
-import sys
-from pathlib import Path
-
-# Ensure project root is in sys.path so ivr_prototype is importable
-_project_root = str(Path(__file__).resolve().parent.parent.parent)
-if _project_root not in sys.path:
-    sys.path.insert(0, _project_root)
 
 def api_root(request):
     return JsonResponse({
@@ -40,5 +33,5 @@ urlpatterns = [
     path('api/alerts/', include('apps.danger_alerts.urls')),
     path('api/analytics/', include('apps.analytics.urls')),
     path('api/ml/', include('apps.ml.urls')),
-    path('api/ivr/', include('ivr_prototype.backend.ivr_urls')),
+    path('api/ivr/', include('apps.ivr.urls')),
 ]

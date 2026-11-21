@@ -11,3 +11,329 @@ pytest==7.4.3
 pytest-django==4.7.0
 httpx==0.25.2
 dnspython==2.7.0
+numpy
+pandas
+joblib
+
+Conversation Log
+in the setting bar remove these sentences
+API Connection Status
+Refresh
+Groq AI
+
+openai/gpt-oss-120b · 126.02ms
+
+MongoDB Atlas
+
+mongodb_atlas
+
+Speech Provider
+Groq Whisper (chunked upload) — Active
+Gnani Streaming STT — Adapter ready, awaiting credentials
+Browser SpeechSynthesis TTS — Active (fallback)
+Privacy & Safety
+All data in this demo is synthetic — no real patient records
+API keys stored server-side only — never sent to browser
+Session tokens expire when browser tab is closed
+Voice recordings are processed and immediately deleted
+Danger sign detection is deterministic — not AI-only
+
+in alert bar inside that  Refer to phc
+WHy unncessary include the ivr there remove it
+Summary of Changes Completed
+1. Settings Bar Cleaned (frontend/src/pages/SettingsPage.tsx)
+
+Completely removed all technical status and disclaimer blocks:
+
+API Connection Status (including Refresh, Groq AI, latency, model details, and MongoDB Atlas).
+Speech Provider section (Groq Whisper, Gnani Streaming STT, Browser SpeechSynthesis TTS).
+Privacy & Safety section (all 5 bullet points regarding synthetic data, token expiration, deterministic rules, etc.).
+
+The Settings page now presents a clean Worker Profile and Application Preferences interface.
+
+2. Removed IVR Call from Alert Bar (frontend/src/pages/EmergencyAlertPage.tsx)
+Removed the "Call via IVR" button from inside the emergency alert cards.
+The action inside each emergency card is now focused strictly on hospital referral: "Mark as Referred to PHC" (and displaying Referred to Primary Health Centre once completed).
+Verification
+Production Build: Verified with npm --prefix frontend run build (tsc -b && vite build passed with 0 errors).
+in followup bar if i click the call ivr it if finshed it does not go to the completed bar....
+It still shows ivr call once clicked it moves to the completed bar 
+& followups mention all the futures visted details right
+In the ivr calls shows that also only the tommorrow calls only
+Don't include unceesaary call ivr in the follow up bar
+It shows only the what are the details will revist date only 
+In ivr bar only includes the call 
+Summary of Implemented Changes
+1. Follow-Up Bar: Future Revisit Dates & Auto-Moving to Completed (FollowUpPage.tsx)
+Removed Unnecessary IVR Buttons / Logic: Removed all IVR call buttons and redirection from the Follow-Up Bar.
+Dedicated Future Revisit Tracking: The Follow-Up bar is now strictly dedicated to showing all upcoming and future scheduled revisit dates:
+Tomorrow's revisits (2026-11-23)
+Upcoming scheduled visits across future dates (2026-11-27, 2026-11-29, 2026-12-05, 2026-12-10, etc.)
+Beneficiary details, contact phone, household location, clinical revisit type, and notes.
+Automatic Move to Completed:
+Clicking "✓ Mark as Completed" on any follow-up card immediately updates the status in the database and moves the card to the Completed tab.
+If a citizen has an IVR call completed in the IVR reminder system, it is automatically recognized as completed and appears in the Completed tab instead of remaining in upcoming.
+2. IVR Reminder Bar: Tomorrow's Calls Only (IVRPage.tsx)
+Strictly Tomorrow's Revisit Calls: The IVR reminder bar now filters to show strictly calls scheduled for Tomorrow (2026-11-23). Any visits scheduled for other dates are excluded.
+Auto-Sync to Completed: Once an IVR call finishes playing successfully, the follow-up record is updated to status: 'completed' in the database so that in the Follow-Up bar it is automatically listed under the Completed tab.
+Verification
+Production Build: Verified via npm --prefix frontend run build (tsc -b && vite build passed with 0 errors).
+include all detias in requirement.s text what some of i missed add it propelry
+
+All missing backend dependencies have been identified, categorized, and added to backend/requirements.txt.
+
+What Was Missing & Why It Was Added
+Category	Package	Purpose / Where It Is Used
+Machine Learning & Risk Models	scikit-learn>=1.3.0	Crucial: Required by ml_prediction_service.py and train_models.py to unpickle and execute the Random Forest models (Pipeline, ColumnTransformer, RandomForestClassifier). Missing this was causing No module named 'sklearn' errors.
+	joblib>=1.3.0	Used to serialize, deserialize, and load the 3 trained Random Forest .joblib model pipelines.
+	pandas>=2.0.0	Used across ML services and feature transformers for DataFrame structuring and dataset manipulation.
+	numpy>=1.24.0	Required for numerical operations, array transformations, and ML inference feature matrices.
+	openpyxl>=3.1.0	Required by Pandas (pd.read_excel) to parse the project's training datasets (Pregnancy_Beneficiary_Dataset.xlsx, Newborn_Beneficiary_Dataset.xlsx, Immunization_Beneficiary_Dataset.xlsx).
+Real-Time & WebSockets	Twisted>=23.10.0	Required as the core networking engine backing the Daphne ASGI server and Django Channels.
+	websockets>=12.0	Required for streaming WebSocket audio connections (Gnani STT / live speech streaming).
+	asgiref>=3.7.0	Core ASGI specification adapter required for Django 4.2 async view support and Channels.
+Networking & HTTP Clients	requests>=2.31.0	Standard synchronous HTTP request library used in testing, external service integrations, and utility scripts.
+Utilities & Data Parsing	python-dateutil>=2.8.0	Used for calculating future revisit dates, follow-up scheduling, and complex ISO timestamp manipulation.
+	ujson>=5.8.0	High-speed JSON serialization/deserialization for large patient/visit record operations.
+Updated backend/requirements.txt
+txt
+# ==============================================================================
+# ASHA Voice Backend - Python Dependencies
+# ==============================================================================
+# Core Web Framework & REST API
+django==4.2.17
+djangorestframework==3.15.2
+django-cors-headers==4.3.1
+asgiref>=3.7.0
+# Database & Data Storage (MongoDB Atlas & SRV DNS)
+pymongo==4.6.1
+dnspython>=2.6.0
+# Real-Time WebSockets & Production ASGI Server
+channels==4.0.0
+daphne==4.0.0
+Twisted>=23.10.0
+websockets>=12.0
+# AI, LLM & Speech Processing (Groq Whisper & Llama, Gnani API)
+groq==0.11.0
+httpx==0.25.2
+requests>=2.31.0
+# Machine Learning, Risk Assessment & Data Pipelines (Random Forest Models)
+scikit-learn>=1.3.0
+joblib>=1.3.0
+pandas>=2.0.0
+numpy>=1.24.0
+openpyxl>=3.1.0
+# Environment Configuration, Validation & Utilities
+python-dotenv==1.0.0
+pydantic>=2.6.0
+python-dateutil>=2.8.0
+ujson>=5.8.0
+# Testing & Quality Assurance
+pytest==7.4.3
+pytest-django==4.7.0
+# TASK: Integrate IVR Prototype into the Main ASHA Voice Application
+
+I have an existing project called **ASHA Voice** with the following structure:
+
+```text
+Ashaa/
+├── backend/                 # Main Django backend
+├── frontend/                # Main React + TypeScript frontend
+├── ivr_prototype/
+│   ├── backend/              # Separate IVR prototype backend
+│   └── frontend/             # Separate IVR prototype frontend
+├── README.md
+├── requirements.txt
+├── package-lock.json
+└── .gitignore
+```
+
+## Main Objective
+
+Integrate the functionality of both the frontend and backend inside `ivr_prototype/` into the existing main ASHA Voice application.
+
+The final application must have:
+
+- One unified React frontend.
+- One unified Django backend.
+- One integrated IVR feature.
+- The existing ASHA Voice functionality fully preserved.
+
+**Do not simply copy the IVR prototype folders into the main folders. Properly integrate their functionality into the existing architecture.**
+
+## Phase 1: Analyse the Existing Project
+
+Before making any changes:
+
+1. Thoroughly inspect the main `frontend/` and `backend/` folders.
+2. Thoroughly inspect both `ivr_prototype/frontend/` and `ivr_prototype/backend/`.
+3. Understand the IVR prototype's components, pages, APIs, backend services, models, URLs, configurations and dependencies.
+4. Identify how the IVR prototype communicates between its frontend and backend.
+5. Identify overlapping components, API endpoints, dependencies and functionality.
+6. Determine exactly which files need to be modified, created, merged or removed.
+
+Do not assume how the existing architecture works. Inspect the actual source code first.
+
+## Phase 2: Frontend Integration
+
+Integrate the IVR prototype's frontend into the existing React + TypeScript application.
+
+Requirements:
+
+1. Follow the existing frontend architecture and coding conventions.
+2. Integrate the IVR interface into the existing navigation and application layout.
+3. Reuse existing UI components and styling wherever appropriate.
+4. Integrate IVR pages and components into the existing React routing system.
+5. Preserve the existing ASHA Voice dashboard, beneficiary management, visit registration, follow-ups, revisit management and visit history.
+6. Avoid duplicate layouts, navigation bars, API clients and unnecessary components.
+7. Ensure responsive design and consistent styling across the application.
+
+The IVR feature should feel like a native part of ASHA Voice, not a separate application.
+
+## Phase 3: Backend Integration
+
+Integrate the IVR prototype's backend functionality into the existing Django backend.
+
+Requirements:
+
+1. Follow the existing Django project structure.
+2. Integrate the necessary IVR apps, views, services, serializers, models and URL routes.
+3. Reuse existing authentication, database connections, configurations and shared services wherever appropriate.
+4. Avoid creating duplicate Django projects or unnecessary database connections.
+5. Integrate the IVR APIs with the existing backend API structure.
+6. Ensure the IVR backend does not interfere with beneficiary, visit, follow-up or other existing workflows.
+7. Update requirements only when genuinely necessary.
+8. Keep all credentials and configuration values in environment variables.
+
+If the prototype uses a separate database or API configuration, inspect it and integrate it carefully rather than blindly replacing the main configuration.
+
+## Phase 4: IVR Functionality
+
+Preserve and integrate all working functionality from the IVR prototype, including:
+
+- Initiating an IVR reminder from the ASHA Voice platform.
+- Selecting the appropriate beneficiary.
+- Retrieving the beneficiary's mobile number from the existing beneficiary records.
+- Preparing the reminder message.
+- Supporting the languages already implemented in the prototype.
+- Displaying call status and call history.
+- Handling API errors and failed requests.
+- Providing appropriate loading states and user feedback.
+
+The IVR feature must integrate with the existing Follow-up section wherever appropriate.
+
+### Important distinction
+
+If the prototype currently uses browser speech synthesis or simulated call states, preserve those as DEMO functionality.
+
+Do not claim that an actual telephone call has been placed unless a real telephony provider has been successfully integrated and verified.
+
+Do not introduce paid telephony services or external APIs without my approval.
+
+## Phase 5: Database and API Integration
+
+1. Use the existing MongoDB configuration and database architecture.
+2. Avoid duplicate beneficiary records.
+3. Reuse existing beneficiary identifiers and mobile-number fields.
+4. Store IVR call records only if the existing architecture supports the required data model.
+5. Ensure the frontend calls the correct integrated Django API endpoints.
+6. Handle missing mobile numbers, invalid numbers and unavailable beneficiary records gracefully.
+
+Do not silently change existing database schemas or delete existing data.
+
+## Phase 6: Testing and Validation
+
+After integration, verify the following:
+
+**Frontend**
+- Main application starts successfully.
+- Existing pages still work.
+- IVR appears in the appropriate navigation location.
+- IVR actions work from the Follow-up section.
+- API communication works correctly.
+- No broken imports, duplicate routes or TypeScript errors.
+
+**Backend**
+- Django starts successfully.
+- Existing API endpoints continue working.
+- IVR endpoints work correctly.
+- Database connections remain functional.
+- No URL conflicts or missing dependencies.
+- No broken imports or Python errors.
+
+**Integration**
+- Beneficiary selection works correctly.
+- The correct beneficiary mobile number is retrieved.
+- IVR reminders are handled correctly.
+- Call status and history are displayed correctly.
+- Existing ASHA Voice workflows remain unaffected.
+
+Run the available tests and build commands where possible. Fix integration-related errors before declaring completion.
+
+## Strict Instructions
+
+- Do not delete or overwrite existing working ASHA Voice functionality.
+- Do not replace the main frontend or backend with the prototype.
+- Do not create another React or Django application.
+- Do not create another database.
+- Do not change the existing technology stack unnecessarily.
+- Do not remove existing routes, pages, APIs or components.
+- Do not hardcode API keys, credentials or mobile numbers.
+- Do not fabricate successful API responses or telephone call statuses.
+- Do not make unrelated UI or architectural changes.
+- Do not modify Git history or run Git commands.
+
+## Final Deliverables
+
+After completing the integration:
+
+1. Provide a summary of all files created, modified and removed.
+2. Explain how the IVR frontend was integrated into the main frontend.
+3. Explain how the IVR backend was integrated into the main backend.
+4. List all new or modified API endpoints.
+5. Mention any database changes.
+6. List any new dependencies and configuration variables.
+7. Provide the exact commands to start the unified frontend and backend.
+8. Report the tests and builds performed and their results.
+9. Clearly identify any functionality that remains simulated or incomplete.
+
+**Final Goal:** I should be able to run ASHA Voice using its original frontend and backend, with the IVR prototype's functionality integrated into the same application. There must be no need to run a separate IVR frontend or backend.
+django==4.2.17
+djangorestframework==3.15.2
+django-cors-headers==4.3.1
+channels==4.0.0
+daphne==4.0.0
+pymongo==4.6.1
+python-dotenv==1.0.0
+groq==0.11.0
+pydantic>=2.6.0
+pytest==7.4.3
+pytest-django==4.7.0
+httpx==0.25.2
+dnspython==2.7.0
+# ==============================================================================
+# ASHA Voice Backend - Python Dependencies
+# ==============================================================================
+# ------------------------------------------------------------------------------
+# Core Web Framework & REST API
+# ------------------------------------------------------------------------------
+django==4.2.17
+djangorestframework==3.15.2
+django-cors-headers==4.3.1
+asgiref>=3.7.0
+# ------------------------------------------------------------------------------
+# Database & Data Storage (MongoDB Atlas & SRV DNS)
+# ------------------------------------------------------------------------------
+pymongo==4.6.1
+dnspython>=2.6.0
+# ------------------------------------------------------------------------------
+# Real-Time WebSockets & Production ASGI Server
+# ------------------------------------------------------------------------------
+channels==4.0.0
+daphne==4.0.0
+Twisted>=23.10.0
+websockets>=12.0
+# ------------------------------------------------------------------------------
+# AI, LLM & Speech Processing (Groq Whisper & Llama, Gnani API)
+# ------------------------------------------------------------------------------
+groq==0.11.0

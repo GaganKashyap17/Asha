@@ -2,10 +2,11 @@ import { useState, useRef } from 'react'
 import {
   Mic, Square, UserCheck, AlertTriangle, CheckCircle2,
   Loader2, Search, ArrowRight, ShieldAlert,
-  Stethoscope, Brain
+  Stethoscope, Brain, Sparkles
 } from 'lucide-react'
-import { voiceAPI, revisitAPI, visitAPI, beneficiaryAPI, mlAPI } from '../services/api'
-import { Link } from 'react-router-dom'
+import { voiceAPI, revisitAPI, visitAPI, beneficiaryAPI, mlAPI, alertAPI } from '../services/api'
+import { Link, useSearchParams } from 'react-router-dom'
+import GnaniRevisitBar from '../components/beneficiaries/GnaniRevisitBar'
 
 type Stage = 'identify' | 'verify' | 'clinical' | 'review' | 'saved'
 
@@ -85,6 +86,15 @@ const FIELD_LABELS: Record<string, string> = {
 }
 
 export default function RevisitPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const initialMode = searchParams.get('mode') === 'gnani' ? 'gnani' : 'existing'
+  const [revisitMode, setRevisitMode] = useState<'existing' | 'gnani'>(initialMode)
+
+  function switchMode(mode: 'existing' | 'gnani') {
+    setRevisitMode(mode)
+    setSearchParams(mode === 'gnani' ? { mode: 'gnani' } : {})
+  }
+
   const [stage, setStage] = useState<Stage>('identify')
   const [language, setLanguage] = useState<'ta' | 'hi' | 'en'>('ta')
   
@@ -432,7 +442,39 @@ export default function RevisitPage() {
       }
 
       // 2. Confirm and save the draft to MongoDB
-      const res = await visitAPI.confirmDraft(draftId)
+      const res = await visitAPI.confirmDraft(draftId, {
+        ...visitRecord,
+        beneficiary_id: verifiedBeneficiary?.beneficiary_id,
+        beneficiary_name: verifiedBeneficiary?.name,
+        revisit_category: category,
+      })
+
+      // 3. If clinical emergency / danger signs were flagged, register an emergency alert with full details
+      if (dangerFlag || visitRecord.danger_flag || (dangerResults && dangerResults.length > 0)) {
+        try {
+          const signs = dangerResults?.length
+            ? dangerResults.map((d: any) => (typeof d === 'string' ? d : d.name))
+            : visitRecord.danger_signs || ['Emergency Clinical Danger Sign Detected']
+
+          await alertAPI.create({
+            visit_id: res.data?.visit?._id || res.data?.visit?.id || draftId,
+            draft_id: draftId,
+            beneficiary_id: verifiedBeneficiary?.beneficiary_id || visitRecord.beneficiary_id,
+            beneficiary_name: verifiedBeneficiary?.name || visitRecord.beneficiary_name || 'Citizen Beneficiary',
+            phone: verifiedBeneficiary?.phone || visitRecord.phone,
+            village: verifiedBeneficiary?.village || visitRecord.village,
+            household: verifiedBeneficiary?.household || visitRecord.household,
+            visit_type: `Revisit: ${category}`,
+            danger_signs: signs,
+            danger_details: dangerResults || [],
+            referral_status: 'pending',
+            resolved: false,
+          })
+        } catch {
+          // Backend draft_confirm handles it as well
+        }
+      }
+
       setSavedVisitId(res.data?.visit?._id || res.data?.visit?.id || draftId)
       setStage('saved')
     } catch (err: any) {
@@ -520,7 +562,50 @@ export default function RevisitPage() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      {/* Top Header */}
+      {/* Revisit Mode Selector Bar: Existing Voice AI vs Gnani API Platform */}
+      <div className="bg-white p-2 rounded-2xl shadow-sm border border-gray-200 flex flex-col sm:flex-row gap-2">
+        <button
+          type="button"
+          onClick={() => switchMode('existing')}
+          className={`flex-1 py-3 px-4 rounded-xl font-bold text-sm flex items-center justify-center gap-2.5 transition-all ${
+            revisitMode === 'existing'
+              ? 'bg-green-700 text-white shadow-sm ring-2 ring-green-600/20'
+              : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+          }`}
+        >
+          <Mic className="w-4 h-4" />
+          <span>Patient Revisit – Existing Voice AI</span>
+          <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono ${
+            revisitMode === 'existing' ? 'bg-green-800 text-green-100' : 'bg-gray-100 text-gray-600'
+          }`}>
+            Whisper + Groq
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => switchMode('gnani')}
+          className={`flex-1 py-3 px-4 rounded-xl font-bold text-sm flex items-center justify-center gap-2.5 transition-all ${
+            revisitMode === 'gnani'
+              ? 'bg-gradient-to-r from-indigo-700 to-purple-700 text-white shadow-sm ring-2 ring-indigo-600/20'
+              : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+          }`}
+        >
+          <Sparkles className="w-4 h-4 text-amber-300" />
+          <span>Gnani Voice Revisit – Prisma + Timbre</span>
+          <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono ${
+            revisitMode === 'gnani' ? 'bg-indigo-900/60 text-indigo-100' : 'bg-gray-100 text-gray-600'
+          }`}>
+            Prisma v3.0 + Timbre
+          </span>
+        </button>
+      </div>
+
+      {revisitMode === 'gnani' ? (
+        <GnaniRevisitBar />
+      ) : (
+        <>
+          {/* Top Header */}
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-green-100 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 text-green-700 font-semibold text-sm mb-1">
@@ -913,11 +998,15 @@ export default function RevisitPage() {
                 Deterministic clinical rules identified danger signs. Immediate medical referral recommended:
               </p>
               <div className="space-y-1">
-                {dangerResults.map((d, i) => (
-                  <div key={i} className="text-xs font-semibold text-red-900 bg-white/70 p-2 rounded-lg border border-red-200">
-                    ⚠ {d.name} {d.referral_message_en && `— ${d.referral_message_en}`}
-                  </div>
-                ))}
+                {dangerResults.map((d: any, i: number) => {
+                  const label = typeof d === 'string' ? d : (d.name || d.sign || d.rule_id || 'Danger Sign')
+                  const message = typeof d === 'object' && d !== null ? (d.referral_message_en || d.referral_message_ta || '') : ''
+                  return (
+                    <div key={i} className="text-xs font-semibold text-red-900 bg-white/70 p-2 rounded-lg border border-red-200">
+                      ⚠ {label} {message && `— ${message}`}
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}
@@ -1578,6 +1667,8 @@ export default function RevisitPage() {
             </Link>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   )

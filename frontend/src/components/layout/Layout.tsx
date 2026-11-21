@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import {
   LayoutDashboard, Mic, Users, ClipboardList, Calendar,
-  AlertTriangle, Settings, LogOut, Menu, X, Bell, UserPlus, Stethoscope
+  AlertTriangle, Settings, LogOut, Menu, X, Bell, UserPlus, Stethoscope, PhoneCall
 } from 'lucide-react'
 
 const NAV = [
@@ -13,6 +13,7 @@ const NAV = [
   { path: '/beneficiaries', icon: Users, label: 'Beneficiaries' },
   { path: '/visits', icon: ClipboardList, label: 'Visit History' },
   { path: '/followups', icon: Calendar, label: 'Follow-ups' },
+  { path: '/ivr', icon: PhoneCall, label: 'IVR Reminders' },
   { path: '/alerts', icon: AlertTriangle, label: 'Alerts' },
   { path: '/settings', icon: Settings, label: 'Settings' },
 ]

@@ -55,6 +55,7 @@ export default function BeneficiaryPage() {
   const [activeBeneficiary, setActiveBeneficiary] = useState<Beneficiary | null>(null)
   const [beneficiaryVisits, setBeneficiaryVisits] = useState<VisitHistoryItem[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
+  const [historySearch, setHistorySearch] = useState('')
 
   // Form states
   const [formData, setFormData] = useState<Partial<Beneficiary>>({
@@ -147,6 +148,7 @@ export default function BeneficiaryPage() {
   // ── Open History Modal ──────────────────────────────────
   function handleOpenHistory(b: Beneficiary) {
     setActiveBeneficiary(b)
+    setHistorySearch('')
     setShowHistoryModal(true)
     setLoadingHistory(true)
     beneficiaryAPI.detail(b.beneficiary_id)
@@ -853,6 +855,29 @@ export default function BeneficiaryPage() {
               </button>
             </div>
 
+            {beneficiaryVisits.length > 0 && (
+              <div className="pt-3 pb-1 shrink-0">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    type="text"
+                    value={historySearch}
+                    onChange={e => setHistorySearch(e.target.value)}
+                    placeholder="Search past visits by type, date, danger sign…"
+                    className="w-full pl-9 pr-8 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                  {historySearch && (
+                    <button
+                      onClick={() => setHistorySearch('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs font-bold w-4 h-4 flex items-center justify-center rounded-full hover:bg-gray-200"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="overflow-y-auto py-4 space-y-3 flex-1">
               {loadingHistory ? (
                 <div className="py-12 flex flex-col items-center justify-center text-gray-400 gap-2">
@@ -860,7 +885,27 @@ export default function BeneficiaryPage() {
                   <p className="text-xs">Loading visit records…</p>
                 </div>
               ) : beneficiaryVisits.length > 0 ? (
-                beneficiaryVisits.map((v, idx) => (
+                (() => {
+                  const q = historySearch.toLowerCase().trim()
+                  const filteredVisits = beneficiaryVisits.filter(v =>
+                    !q ||
+                    (v.visit_type && v.visit_type.toLowerCase().includes(q)) ||
+                    (v.visit_date && v.visit_date.includes(q)) ||
+                    (v.confirmation_status && v.confirmation_status.toLowerCase().includes(q)) ||
+                    (v.danger_signs && v.danger_signs.some(d => d.toLowerCase().includes(q))) ||
+                    (v.vaccinations && v.vaccinations.some(vac => vac.toLowerCase().includes(q)))
+                  )
+                  if (filteredVisits.length === 0) {
+                    return (
+                      <div className="text-center py-10 text-gray-400">
+                        <p className="text-sm font-medium text-gray-500">No visits matching &quot;{historySearch}&quot;</p>
+                        <button onClick={() => setHistorySearch('')} className="mt-2 text-xs text-green-700 hover:underline">
+                          Clear search
+                        </button>
+                      </div>
+                    )
+                  }
+                  return filteredVisits.map((v, idx) => (
                   <div key={v._id || v.id || idx} className="bg-gray-50 rounded-2xl p-4 border border-gray-100 space-y-2">
                     <div className="flex items-center justify-between flex-wrap gap-2">
                       <div className="flex items-center gap-2">
@@ -903,7 +948,7 @@ export default function BeneficiaryPage() {
                     )}
                   </div>
                 ))
-              ) : (
+              })()) : (
                 <div className="text-center py-12 text-gray-400">
                   <Calendar className="w-10 h-10 mx-auto mb-2 text-gray-300" />
                   <p className="text-sm font-medium text-gray-500">No visits recorded yet</p>

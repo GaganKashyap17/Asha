@@ -44,10 +44,21 @@ def dashboard_view(request):
         pending_fu, key=lambda x: x.get("due_date", "9999")
     )[:5]
 
-    # Active danger alerts
-    active_alerts = mongodb_service.find_all("danger_alerts", {"resolved": False})
+    # Active danger alerts — ensure danger visits from history are synchronized
+    try:
+        from apps.danger_alerts.views import _sync_danger_visits_to_alerts, _enrich_alert_with_beneficiary_details
+        _sync_danger_visits_to_alerts()
+    except Exception as e:
+        logger.error(f"Error syncing danger visits in dashboard: {e}")
+
+    active_alerts = mongodb_service.find_all("danger_alerts", {"resolved": {"$ne": True}})
+    
+    # Also check visits with danger_flag True not yet resolved
+    unresolved_danger_visits = [v for v in all_visits if v.get("danger_flag") and not v.get("resolved")]
+    active_count = max(len(active_alerts), len(unresolved_danger_visits))
+
     stats["active_alerts"] = active_alerts
-    stats["active_danger_alerts"] = len(active_alerts)
+    stats["active_danger_alerts"] = active_count
 
     # Weekly data
     today = datetime.now(timezone.utc).date()

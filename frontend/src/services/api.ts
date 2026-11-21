@@ -118,7 +118,7 @@ export const visitAPI = {
    * This is the ONLY operation that writes a visit record to MongoDB.
    * Returns 422 if any mandatory field is missing or validation fails.
    */
-  confirmDraft: (draftId: string) => api.post(`/api/visits/draft/${draftId}/confirm/`),
+  confirmDraft: (draftId: string, data?: object) => api.post(`/api/visits/draft/${draftId}/confirm/`, data || {}),
 
   /** Discard a draft without saving (cancel workflow). */
   discardDraft: (draftId: string) => api.delete(`/api/visits/draft/${draftId}/discard/`),
@@ -166,10 +166,29 @@ export const followupAPI = {
 export const alertAPI = {
   list: (resolved?: boolean) =>
     api.get('/api/alerts/', { params: { resolved } }),
+  create: (data: object) => api.post('/api/alerts/', data),
   update: (id: string, data: object) => api.patch(`/api/alerts/${id}/`, data),
 }
 
 export const analyticsAPI = {
   dashboard: () => api.get('/api/analytics/dashboard/'),
   health: () => api.get('/api/analytics/health/'),
+}
+
+export const ivrAPI = {
+  getStatus: () => api.get('/api/ivr/status/'),
+  getBeneficiaries: (tomorrowOnly: boolean = true) =>
+    api.get('/api/ivr/beneficiaries/', { params: { tomorrow_only: tomorrowOnly } }),
+  initiate: (data: {
+    beneficiary_name: string
+    mobile_number: string
+    visit_date: string
+    visit_type: string
+    language: string
+    followup_id?: string
+    beneficiary_id?: string
+    notes?: string
+  }) => api.post('/api/ivr/initiate/', data),
+  getHistory: (limit: number = 100) =>
+    api.get('/api/ivr/history/', { params: { limit } }),
 }

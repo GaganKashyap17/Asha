@@ -358,6 +358,72 @@ class MLPredictionService:
 
         return explanations
 
+    def _evaluate_heuristic(self, cat_key: str, features_df: pd.DataFrame) -> tuple[int, float, float]:
+        """Rule-based heuristic risk probability fallback when scikit-learn models are not loaded."""
+        r = features_df.iloc[0]
+        prob_concern = 0.08
+
+        if cat_key == "pregnancy":
+            sys_bp = r.get("Systolic_BP_mmHg")
+            dia_bp = r.get("Diastolic_BP_mmHg")
+            if sys_bp is not None and not np.isnan(sys_bp) and sys_bp >= 140:
+                prob_concern += 0.35
+            if dia_bp is not None and not np.isnan(dia_bp) and dia_bp >= 90:
+                prob_concern += 0.35
+
+            hb = r.get("Haemoglobin_g_dL")
+            if hb is not None and not np.isnan(hb):
+                if hb < 7.0:
+                    prob_concern += 0.45
+                elif hb < 11.0:
+                    prob_concern += 0.25
+
+            if str(r.get("Vaginal_Bleeding", "")).lower() == "yes":
+                prob_concern += 0.45
+            if str(r.get("Severe_Headache_or_Blurred_Vision", "")).lower() == "yes":
+                prob_concern += 0.35
+            if str(r.get("Fetal_Movement", "")).lower() == "absent":
+                prob_concern += 0.40
+            bs = r.get("Blood_Sugar_mg_dL")
+            if bs is not None and not np.isnan(bs) and bs >= 140:
+                prob_concern += 0.25
+
+        elif cat_key == "newborn":
+            temp = r.get("Body_Temperature_C")
+            if temp is not None and not np.isnan(temp) and (temp > 37.5 or temp < 36.5):
+                prob_concern += 0.35
+            rr = r.get("Respiratory_Rate_bpm")
+            if rr is not None and not np.isnan(rr) and (rr > 60 or rr < 30):
+                prob_concern += 0.35
+            if str(r.get("Difficulty_in_Breathing", "")).lower() == "yes":
+                prob_concern += 0.45
+            if str(r.get("Difficulty_in_Feeding", "")).lower() == "yes":
+                prob_concern += 0.40
+            if str(r.get("Yellowing_of_Skin_or_Eyes", "")).lower() not in ("none", "no", "unknown", "nan", ""):
+                prob_concern += 0.30
+            if str(r.get("Umbilical_Cord_Condition", "")).lower() == "abnormal":
+                prob_concern += 0.35
+
+        elif cat_key == "immunization":
+            deficit = float(r.get("dose_deficit_count", 0) or 0)
+            if deficit > 0:
+                prob_concern += min(0.50, 0.20 * deficit)
+            if str(r.get("Missed_Vaccination_Doses", "")).lower() == "yes":
+                prob_concern += 0.25
+            waz = r.get("WAZ_Score")
+            if waz is not None and not np.isnan(waz) and waz < -2.0:
+                prob_concern += 0.35
+            haz = r.get("HAZ_Score")
+            if haz is not None and not np.isnan(haz) and haz < -2.0:
+                prob_concern += 0.35
+            if str(r.get("General_Health_Condition", "")).lower() == "unwell":
+                prob_concern += 0.30
+
+        prob_concern = round(min(0.95, max(0.05, prob_concern)), 4)
+        prob_standard = round(1.0 - prob_concern, 4)
+        pred_class = 1 if prob_concern >= 0.50 else 0
+        return pred_class, prob_concern, prob_standard
+
     def predict(
         self,
         category: str,
@@ -370,13 +436,6 @@ class MLPredictionService:
         """
         cat_key = self.normalize_category(category)
         pipeline = self._models.get(cat_key)
-
-        if pipeline is None:
-            return {
-                "success": False,
-                "error": f"No trained Random Forest model available for category '{cat_key}'.",
-                "safety_disclaimer": SAFETY_DISCLAIMER,
-            }
 
         # Build appropriate feature dataframe
         if cat_key == "pregnancy":
@@ -394,18 +453,19 @@ class MLPredictionService:
         missing_count = int(features_df.isna().sum().sum())
         completeness_ratio = round(1.0 - (missing_count / total_cols), 2)
 
-        try:
-            pred_class = int(pipeline.predict(features_df)[0])
-            pred_probs = pipeline.predict_proba(features_df)[0]
-            prob_concern = round(float(pred_probs[1]), 4)
-            prob_standard = round(float(pred_probs[0]), 4)
-        except Exception as e:
-            logger.error(f"Inference failure for {cat_key}: {e}")
-            return {
-                "success": False,
-                "error": f"Inference execution failed: {str(e)}",
-                "safety_disclaimer": SAFETY_DISCLAIMER,
-            }
+        if pipeline is not None:
+            try:
+                pred_class = int(pipeline.predict(features_df)[0])
+                pred_probs = pipeline.predict_proba(features_df)[0]
+                prob_concern = round(float(pred_probs[1]), 4)
+                prob_standard = round(float(pred_probs[0]), 4)
+            except Exception as e:
+                logger.error(f"Inference failure for {cat_key}: {e}")
+                pred_class, prob_concern, prob_standard = self._evaluate_heuristic(cat_key, features_df)
+                model_display_name = f"{cat_key.capitalize()} Clinical Screening Advisory"
+        else:
+            pred_class, prob_concern, prob_standard = self._evaluate_heuristic(cat_key, features_df)
+            model_display_name = f"{cat_key.capitalize()} Clinical Screening Advisory"
 
         # Human-readable label
         if pred_class == 1 or prob_concern >= 0.50:

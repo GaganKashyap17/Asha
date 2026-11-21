@@ -11,6 +11,7 @@ import VisitHistoryPage from './pages/VisitHistoryPage'
 import FollowUpPage from './pages/FollowUpPage'
 import EmergencyAlertPage from './pages/EmergencyAlertPage'
 import SettingsPage from './pages/SettingsPage'
+import IVRPage from './pages/IVRPage'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import Layout from './components/layout/Layout'
 
@@ -35,6 +36,7 @@ export default function App() {
           <Route path="/visits" element={<PrivateRoute><Layout><VisitHistoryPage /></Layout></PrivateRoute>} />
           <Route path="/followups" element={<PrivateRoute><Layout><FollowUpPage /></Layout></PrivateRoute>} />
           <Route path="/alerts" element={<PrivateRoute><Layout><EmergencyAlertPage /></Layout></PrivateRoute>} />
+          <Route path="/ivr" element={<PrivateRoute><Layout><IVRPage /></Layout></PrivateRoute>} />
           <Route path="/settings" element={<PrivateRoute><Layout><SettingsPage /></Layout></PrivateRoute>} />
         </Routes>
       </BrowserRouter>
