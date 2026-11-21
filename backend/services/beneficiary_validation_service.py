@@ -181,6 +181,65 @@ def _is_valid_indian_phone(p_str: Any) -> bool:
     return bool(re.match(r"^[6-9]\d{9}$", cleaned))
 
 
+def extract_int_value(val: Any) -> Optional[int]:
+    """
+    Extracts an integer from an int, string, spoken words, or noisy speech transcript.
+    Examples:
+      1 -> 1
+      "1" -> 1
+      "Bottle Pregnancy is one." -> 1
+      "two live births" -> 2
+      "first pregnancy" -> 1
+      "None" -> 0
+    """
+    if val is None or val == "":
+        return None
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        pass
+    s = str(val).strip()
+    # Direct digits in string
+    digits = re.findall(r"\b\d+\b", s)
+    if digits:
+        return int(digits[0])
+    # Number words across English, Kannada, Hindi, Tamil
+    word_map = {
+        "zero": 0, "none": 0, "nil": 0, "no": 0,
+        "one": 1, "first": 1,
+        "two": 2, "second": 2,
+        "three": 3, "third": 3,
+        "four": 4, "fourth": 4,
+        "five": 5, "fifth": 5,
+        "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+        # Kannada
+        "ಒಂದು": 1, "ಎರಡು": 2, "ಮೂರು": 3, "ನಾಲ್ಕು": 4, "ಐದು": 5,
+        # Hindi
+        "शून्य": 0, "एक": 1, "दो": 2, "तीन": 3, "चार": 4, "पांच": 5,
+        # Tamil
+        "பூஜ்ஜியம்": 0, "ஒன்று": 1, "இரண்டு": 2, "மூன்று": 3, "நான்கு": 4, "ஐந்து": 5,
+    }
+    for word, num in word_map.items():
+        if re.search(rf"\b{re.escape(word)}\b", s, re.I):
+            return num
+    return None
+
+
+def extract_float_value(val: Any) -> Optional[float]:
+    """Extracts a float from a float, int, string, or noisy speech transcript."""
+    if val is None or val == "":
+        return None
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        pass
+    s = str(val).strip()
+    floats = re.findall(r"\b\d+(?:\.\d+)?\b", s)
+    if floats:
+        return float(floats[0])
+    return None
+
+
 def validate_beneficiary_data(
     category: str,
     data: Dict[str, Any],
@@ -296,8 +355,10 @@ def validate_beneficiary_data(
             else:
                 missing.append("gestational_age_weeks")
         else:
-            try:
-                ga_val = int(ga)
+            ga_val = extract_int_value(ga)
+            if ga_val is None:
+                errors.append("Gestational age must be an integer.")
+            else:
                 # If given as month (1-9), convert to weeks estimate
                 if sanitized.get("gestational_age_weeks") is None and sanitized.get("pregnancy_month"):
                     pm = int(sanitized["pregnancy_month"])
@@ -306,8 +367,6 @@ def validate_beneficiary_data(
                     if not (1 <= ga_val <= 44):
                         errors.append(f"Gestational age {ga_val} weeks is outside valid range (1-44).")
                     sanitized["gestational_age_weeks"] = ga_val
-            except (ValueError, TypeError):
-                errors.append("Gestational age must be an integer.")
 
         # Gravida (number of previous pregnancies)
         gravida = sanitized.get("gravida")
@@ -320,29 +379,29 @@ def validate_beneficiary_data(
                 missing.append("gravida")
         
         if gravida not in (None, ""):
-            try:
-                g_val = int(gravida)
-                if g_val < 0:
-                    errors.append("Number of previous pregnancies cannot be negative.")
-                sanitized["gravida"] = g_val
-            except (ValueError, TypeError):
+            g_val = extract_int_value(gravida)
+            if g_val is None:
                 errors.append("Gravida must be a valid integer.")
+            elif g_val < 0:
+                errors.append("Number of previous pregnancies cannot be negative.")
+            else:
+                sanitized["gravida"] = g_val
 
         # Previous live births
         plb = sanitized.get("previous_live_births")
         if plb in (None, ""):
             missing.append("previous_live_births")
         else:
-            try:
-                plb_val = int(plb)
-                if plb_val < 0:
-                    errors.append("Previous live births cannot be negative.")
+            plb_val = extract_int_value(plb)
+            if plb_val is None:
+                errors.append("Previous live births must be a valid integer.")
+            elif plb_val < 0:
+                errors.append("Previous live births cannot be negative.")
+            else:
                 sanitized["previous_live_births"] = plb_val
                 if "gravida" in sanitized and isinstance(sanitized["gravida"], int):
                     if plb_val > sanitized["gravida"]:
                         errors.append("Previous live births cannot exceed the number of previous pregnancies.")
-            except (ValueError, TypeError):
-                errors.append("Previous live births must be a valid integer.")
 
         # Previous pregnancy complications
         comp = sanitized.get("previous_complications")
@@ -424,13 +483,13 @@ def validate_beneficiary_data(
         if bw in (None, ""):
             missing.append("birth_weight_kg")
         else:
-            try:
-                bw_val = float(bw)
+            bw_val = extract_float_value(bw)
+            if bw_val is None:
+                errors.append("Birth weight must be a valid number.")
+            else:
                 if not (0.4 <= bw_val <= 10.0):
                     errors.append(f"Birth weight {bw_val} kg is outside valid range (0.4 - 10.0 kg).")
                 sanitized["birth_weight_kg"] = round(bw_val, 2)
-            except (ValueError, TypeError):
-                errors.append("Birth weight must be a valid number.")
 
     # ─────────────────────────────────────────────────────────────────────────
     # 3. IMMUNIZATION / CHILD

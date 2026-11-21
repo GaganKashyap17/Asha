@@ -403,7 +403,11 @@ def beneficiary_extract_field(request):
     Extract a single field from a short speech answer.
     Normalizes dates to YYYY-MM-DD, numbers to int/float, etc.
     """
-    from services.beneficiary_validation_service import normalize_date_string
+    from services.beneficiary_validation_service import (
+        normalize_date_string,
+        extract_int_value,
+        extract_float_value,
+    )
     import re
     
     field = request.data.get("field", "").strip()
@@ -466,15 +470,11 @@ def beneficiary_extract_field(request):
                 
     # Integer fields
     elif field in ("age", "gestational_age_weeks", "gravida", "previous_pregnancies", "previous_live_births", "pregnancy_month"):
-        nums = re.findall(r"\b\d+\b", transcript)
-        if nums:
-            extracted_val = int(nums[0])
+        extracted_val = extract_int_value(transcript)
             
     # Float fields
     elif field in ("birth_weight_kg", "birth_weight", "weight_kg"):
-        nums = re.findall(r"\b\d+(?:\.\d+)?\b", transcript)
-        if nums:
-            extracted_val = float(nums[0])
+        extracted_val = extract_float_value(transcript)
             
     # Blood group
     elif field == "blood_group":
@@ -526,9 +526,21 @@ def beneficiary_extract_field(request):
         cleaned = re.sub(r"^(her|his|the|my)?\s*(name|address|household|phone|category)\s*(is)?\s*", "", transcript, flags=re.I).strip()
         extracted_val = cleaned or transcript
         
+    # Prevent noisy strings from being placed into numeric or date inputs
+    numeric_or_date = (
+        "age", "gestational_age_weeks", "gravida", "previous_pregnancies",
+        "previous_live_births", "pregnancy_month", "birth_weight_kg",
+        "birth_weight", "weight_kg", "lmp", "edd", "expected_delivery_date",
+        "dob", "date_of_birth"
+    )
+    if field in numeric_or_date:
+        final_val = extracted_val
+    else:
+        final_val = extracted_val if extracted_val is not None else transcript
+
     return Response({
         "field": target_field,
-        "value": extracted_val if extracted_val is not None else transcript,
+        "value": final_val,
         "raw_transcript": transcript
     })
 

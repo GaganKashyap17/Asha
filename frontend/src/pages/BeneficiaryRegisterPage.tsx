@@ -6,7 +6,8 @@ import {
   Check, X, Sparkles
 } from 'lucide-react'
 import { voiceAPI, beneficiaryAPI } from '../services/api'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
+import GnaniBeneficiaryBar from '../components/beneficiaries/GnaniBeneficiaryBar'
 
 export type BeneficiaryCategory = 'pregnant_woman' | 'newborn' | 'immunization_child' | 'other'
 
@@ -157,6 +158,15 @@ function FieldLabel({
 }
 
 export default function BeneficiaryRegisterPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const initialMode = searchParams.get('mode') === 'gnani' ? 'gnani' : 'existing'
+  const [registrationMode, setRegistrationMode] = useState<'existing' | 'gnani'>(initialMode)
+
+  function switchMode(mode: 'existing' | 'gnani') {
+    setRegistrationMode(mode)
+    setSearchParams(mode === 'gnani' ? { mode: 'gnani' } : {})
+  }
+
   const [category, setCategory] = useState<BeneficiaryCategory>('pregnant_woman')
   const [language, setLanguage] = useState<'ta' | 'hi' | 'en'>('ta')
 
@@ -497,8 +507,51 @@ export default function BeneficiaryRegisterPage() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      {/* Top Header */}
-      <div className="bg-white rounded-2xl p-6 shadow-sm border border-green-100 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      {/* Registration Mode Selector Bar: Existing Voice AI vs Gnani API Platform */}
+      <div className="bg-white p-2 rounded-2xl shadow-sm border border-gray-200 flex flex-col sm:flex-row gap-2">
+        <button
+          type="button"
+          onClick={() => switchMode('existing')}
+          className={`flex-1 py-3 px-4 rounded-xl font-bold text-sm flex items-center justify-center gap-2.5 transition-all ${
+            registrationMode === 'existing'
+              ? 'bg-green-700 text-white shadow-sm ring-2 ring-green-600/20'
+              : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+          }`}
+        >
+          <Mic className="w-4 h-4" />
+          <span>Beneficiary Registration – Existing Voice AI</span>
+          <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono ${
+            registrationMode === 'existing' ? 'bg-green-800 text-green-100' : 'bg-gray-100 text-gray-600'
+          }`}>
+            Whisper + Groq
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => switchMode('gnani')}
+          className={`flex-1 py-3 px-4 rounded-xl font-bold text-sm flex items-center justify-center gap-2.5 transition-all ${
+            registrationMode === 'gnani'
+              ? 'bg-gradient-to-r from-indigo-700 to-purple-700 text-white shadow-sm ring-2 ring-indigo-600/20'
+              : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+          }`}
+        >
+          <Sparkles className="w-4 h-4 text-amber-300" />
+          <span>Gnani Voice Registration – Prisma + Timbre</span>
+          <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono ${
+            registrationMode === 'gnani' ? 'bg-indigo-900/60 text-indigo-100' : 'bg-gray-100 text-gray-600'
+          }`}>
+            Prisma v3.0 + Timbre
+          </span>
+        </button>
+      </div>
+
+      {registrationMode === 'gnani' ? (
+        <GnaniBeneficiaryBar />
+      ) : (
+        <>
+          {/* Top Header */}
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-green-100 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 text-green-700 font-semibold text-sm mb-1">
             <UserPlus className="w-5 h-5" />
@@ -1502,6 +1555,8 @@ export default function BeneficiaryRegisterPage() {
             </button>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   )

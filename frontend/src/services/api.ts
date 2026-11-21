@@ -42,6 +42,26 @@ export const voiceAPI = {
     }),
 }
 
+export const gnaniAPI = {
+  status: () => api.get('/api/voice/gnani/status/'),
+  tts: (text: string, language: string = 'ta', voice?: string) =>
+    api.post('/api/voice/gnani/tts/', { text, language, voice }, { responseType: 'blob' }),
+  translate: (text: string, source_language: string = 'ta') =>
+    api.post('/api/voice/gnani/translate/', { text, source_language }),
+  transcribe: (formData: FormData) =>
+    api.post('/api/voice/gnani/transcribe/', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+  getStreamWebSocketUrl: (language: string = 'ta') => {
+    const host = window.location.hostname || 'localhost'
+    const port = '8000'
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${proto}//${host}:${port}/ws/gnani/stream/?language=${language}`
+  },
+}
+
+
+
 export const visitAPI = {
   /**
    * Extract visit data from transcript.

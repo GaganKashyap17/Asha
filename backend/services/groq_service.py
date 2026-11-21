@@ -18,6 +18,10 @@ class GroqService:
         self._model = os.environ.get('GROQ_MODEL', 'llama-3.3-70b-versatile')
         self._client = None
 
+    @property
+    def model(self) -> str:
+        return self._model
+
     def _get_client(self):
         if not self._api_key or self._api_key == 'your_groq_api_key_here':
             raise ValueError("GROQ_API_KEY not configured")
@@ -251,7 +255,7 @@ Return ONLY valid JSON matching this exact schema:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                max_tokens=900,
+                max_tokens=2048,
                 temperature=0.1,
                 response_format={"type": "json_object"},
             )
@@ -260,6 +264,7 @@ Return ONLY valid JSON matching this exact schema:
         except Exception as e:
             logger.error(f"Beneficiary extraction failed: {type(e).__name__}")
             raise
+
 
     def extract_revisit_identity(self, transcript: str) -> dict:
         """Extract beneficiary ID and name from revisit speech."""
@@ -621,9 +626,14 @@ Return ONLY valid JSON matching this exact schema:
 
     def translate_to_english(self, transcript: str, source_language: str) -> str:
         """Translate non-English transcript to English."""
-        if not source_language or source_language == 'en':
+        if not source_language or source_language == 'en' or not transcript.strip():
             return transcript
-        system_prompt = "Translate the following healthcare speech transcript to English. Preserve all medical terms, names, and numbers exactly. Return only the translation."
+        system_prompt = (
+            "You are a medical translator for ASHA healthcare workers in India. "
+            "Translate the following healthcare speech transcript into clear, fluent English. "
+            "Preserve all patient names, numbers, ages, dates, locations, and clinical terms accurately. "
+            "Return ONLY the English translation without any thoughts, preamble, or notes."
+        )
         try:
             client = self._get_client()
             response = client.chat.completions.create(
@@ -632,13 +642,18 @@ Return ONLY valid JSON matching this exact schema:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": transcript},
                 ],
-                max_tokens=500,
+                max_tokens=2048,
                 temperature=0.1,
             )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            logger.error(f"Translation failed: {type(e).__name__}")
+            content = (response.choices[0].message.content or "").strip()
+            if content:
+                return content
+            logger.warning("Empty content returned from translation LLM; keeping original transcript.")
             return transcript
+        except Exception as e:
+            logger.error(f"Translation failed: {type(e).__name__}: {e}")
+            return transcript
+
 
 
 # Singleton

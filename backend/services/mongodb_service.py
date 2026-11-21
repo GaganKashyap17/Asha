@@ -66,7 +66,7 @@ class MongoDBService:
             logger.info(f"Creating indexes for database: {db_name}")
             self._create_indexes()
             self._connected = True
-            logger.info(f"✓ MongoDB Atlas connected successfully to database: {db_name}")
+            logger.info(f"[SUCCESS] MongoDB Atlas connected successfully to database: {db_name}")
             return True
         except ServerSelectionTimeoutError as e:
             logger.error(f"MongoDB connection failed: ServerSelectionTimeoutError - Cannot reach server")
