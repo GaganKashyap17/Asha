@@ -43,19 +43,78 @@ export const voiceAPI = {
 }
 
 export const visitAPI = {
-  extract: (transcript: string, visit_type: string) =>
-    api.post('/api/visits/extract/', { transcript, visit_type }),
+  /**
+   * Extract visit data from transcript.
+   * Returns a draft (in-memory only, NOT saved to MongoDB).
+   * Response includes draft_id, missing_fields, is_complete, next_prompt.
+   */
+  extract: (transcript: string, visit_type: string, extra?: Record<string, string>) =>
+    api.post('/api/visits/extract/', { transcript, visit_type, ...extra }),
+
   list: (params?: object) => api.get('/api/visits/', { params }),
   detail: (id: string) => api.get(`/api/visits/${id}/`),
+
   correct: (id: string, field: string, value: unknown) =>
     api.patch(`/api/visits/${id}/correct/`, { field, value }),
+
+  /** Legacy confirm for already-saved visit records */
   confirm: (id: string) => api.post(`/api/visits/${id}/confirm/`),
+
+  // ── Draft management ──────────────────────────────────────────────────
+
+  /** Get current state of a draft (not yet saved) */
+  getDraft: (draftId: string) => api.get(`/api/visits/draft/${draftId}/`),
+
+  /**
+   * Add or correct a field in a draft.
+   * Body: { field, value? } or { field, transcript } for voice re-extraction.
+   */
+  addDraftField: (draftId: string, data: { field: string; value?: unknown; transcript?: string }) =>
+    api.post(`/api/visits/draft/${draftId}/add-field/`, data),
+
+  /**
+   * Confirm and save a completed draft to MongoDB.
+   * This is the ONLY operation that writes a visit record to MongoDB.
+   * Returns 422 if any mandatory field is missing or validation fails.
+   */
+  confirmDraft: (draftId: string) => api.post(`/api/visits/draft/${draftId}/confirm/`),
+
+  /** Discard a draft without saving (cancel workflow). */
+  discardDraft: (draftId: string) => api.delete(`/api/visits/draft/${draftId}/discard/`),
 }
 
 export const beneficiaryAPI = {
   list: (search?: string) => api.get('/api/beneficiaries/', { params: { search } }),
   detail: (id: string) => api.get(`/api/beneficiaries/${id}/`),
   create: (data: object) => api.post('/api/beneficiaries/', data),
+  update: (id: string, data: object) => api.put(`/api/beneficiaries/${id}/`, data),
+  delete: (id: string) => api.delete(`/api/beneficiaries/${id}/`),
+  registerVoice: (data: { transcript: string; beneficiary_type: string; language?: string }) =>
+    api.post('/api/beneficiaries/register-voice/', data),
+  extractField: (data: { field: string; transcript: string; category?: string; language?: string }) =>
+    api.post('/api/beneficiaries/extract-field/', data),
+  checkDuplicate: (data: { name?: string; phone?: string; mother_beneficiary_id?: string; dob?: string }) =>
+    api.post('/api/beneficiaries/check-duplicate/', data),
+  lookup: (beneficiaryId: string) =>
+    api.get(`/api/beneficiaries/lookup/${beneficiaryId}/`),
+}
+
+export const revisitAPI = {
+  init: (data: { transcript: string; language?: string }) =>
+    api.post('/api/visits/revisit/init/', data),
+  extract: (data: {
+    transcript: string;
+    beneficiary_id: string;
+    beneficiary_type?: string;
+    language?: string;
+  }) => api.post('/api/visits/revisit/extract/', data),
+  extractField: (data: {
+    field: string;
+    transcript: string;
+    category?: string;
+    draft_id?: string;
+    language?: string;
+  }) => api.post('/api/visits/revisit/extract-field/', data),
 }
 
 export const followupAPI = {

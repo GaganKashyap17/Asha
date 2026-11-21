@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 class VisitRecord(BaseModel):
     """Pydantic schema for extracted visit data."""
+    model_config = {"extra": "allow"}
+
     beneficiary_name: Optional[str] = None
     beneficiary_id: Optional[str] = None
     visit_type: str = "household"
@@ -30,6 +32,36 @@ class VisitRecord(BaseModel):
     uncertain_fields: List[str] = Field(default_factory=list)
     confirmation_status: str = "pending"
     confidence_score: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    # Revisit Clinical Fields:
+    # 1. Pregnant Woman
+    blood_pressure: Optional[str] = None
+    blood_pressure_systolic: Optional[int] = None
+    blood_pressure_diastolic: Optional[int] = None
+    hb_level: Optional[float] = None
+    blood_sugar_level: Optional[float] = None
+    vaginal_bleeding: Optional[str] = None
+    severe_headache_blurred_vision: Optional[str] = None
+    fetal_movement: Optional[str] = None
+    ifa_calcium_consumption: Optional[str] = None
+
+    # 2. Newborn
+    temperature_celsius: Optional[float] = None
+    respiratory_rate: Optional[int] = None
+    breastfeeding_status: Optional[str] = None
+    difficulty_in_feeding: Optional[str] = None
+    difficulty_in_breathing: Optional[str] = None
+    yellowing_skin_eyes: Optional[str] = None
+    umbilical_cord_condition: Optional[str] = None
+
+    # 3. Immunization
+    height_cm: Optional[float] = None
+    general_health_condition: Optional[str] = None
+    vaccines_due_today: Optional[Union[str, List[str]]] = None
+    vaccines_given_today: Optional[Union[str, List[str]]] = None
+    missed_vaccination_doses: Optional[Union[str, List[str]]] = None
+    previous_aefi: Optional[str] = None
+    next_vaccination_due_date: Optional[str] = None
 
     @field_validator('visit_date', 'next_visit_date', mode='before')
     @classmethod

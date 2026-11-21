@@ -191,6 +191,21 @@ class MongoDBService:
                 return True
         return False
 
+    def update_many(self, collection: str, query: dict, update: dict) -> int:
+        self.ensure_connected()
+        update_data = update.get('$set', update)
+        update_data['updated_at'] = datetime.now(timezone.utc).isoformat()
+        if self._db is not None:
+            result = self._db[collection].update_many(query, {'$set': update_data})
+            return result.modified_count
+        self._ensure_memory()
+        count = 0
+        for item in self._memory_store.get(collection, []):
+            if self._matches(item, query):
+                item.update(update_data)
+                count += 1
+        return count
+
     def delete_one(self, collection: str, query: dict) -> bool:
         self.ensure_connected()
         if self._db is not None:
@@ -219,11 +234,37 @@ class MongoDBService:
         if self._memory_store is None:
             self._memory_store = {col: [] for col in self.COLLECTIONS}
 
-    @staticmethod
-    def _matches(item: dict, query: dict) -> bool:
-        for k, v in query.items():
-            if item.get(k) != v:
+    @classmethod
+    def _matches(cls, item: dict, query: dict) -> bool:
+        import re
+        if "$or" in query:
+            or_clauses = query["$or"]
+            if not any(cls._matches(item, clause) for clause in or_clauses):
                 return False
+
+        for k, v in query.items():
+            if k == "$or":
+                continue
+            item_val = item.get(k)
+            if isinstance(v, dict):
+                if "$ne" in v and item_val == v["$ne"]:
+                    return False
+                if "$in" in v and item_val not in v["$in"]:
+                    return False
+                if "$nin" in v and item_val in v["$nin"]:
+                    return False
+                if "$exists" in v:
+                    exists = k in item
+                    if exists != v["$exists"]:
+                        return False
+                if "$regex" in v:
+                    pattern = v["$regex"]
+                    flags = re.IGNORECASE if "i" in v.get("$options", "") else 0
+                    if not (isinstance(item_val, str) and re.search(pattern, item_val, flags)):
+                        return False
+            else:
+                if item_val != v:
+                    return False
         return True
 
     # ------------------------------------------------------------------ domain helpers
@@ -232,7 +273,7 @@ class MongoDBService:
         return self.find_one('users', {'worker_id': worker_id})
 
     def get_beneficiary(self, beneficiary_id: str) -> Optional[dict]:
-        return self.find_one('beneficiaries', {'beneficiary_id': beneficiary_id})
+        return self.find_one('beneficiaries', {'beneficiary_id': beneficiary_id, 'is_deleted': {'$ne': True}})
 
     def get_visits_for_beneficiary(self, beneficiary_id: str) -> List[dict]:
         return self.find_all('visits', {'beneficiary_id': beneficiary_id})
@@ -245,7 +286,7 @@ class MongoDBService:
 
     def aggregate_dashboard_stats(self) -> dict:
         return {
-            "total_beneficiaries": self.count('beneficiaries'),
+            "total_beneficiaries": self.count('beneficiaries', {'is_deleted': {'$ne': True}}),
             "total_visits": self.count('visits'),
             "pending_followups": self.count('followups', {'status': 'pending'}),
             "active_danger_alerts": self.count('danger_alerts', {'resolved': False}),

@@ -1,0 +1,1489 @@
+import { useState, useRef } from 'react'
+import {
+  Mic, Square, UserCheck, AlertTriangle, CheckCircle2,
+  Loader2, Search, ArrowRight, ShieldAlert,
+  Stethoscope
+} from 'lucide-react'
+import { voiceAPI, revisitAPI, visitAPI, beneficiaryAPI } from '../services/api'
+import { Link } from 'react-router-dom'
+
+type Stage = 'identify' | 'verify' | 'clinical' | 'review' | 'saved'
+
+interface BeneficiaryRecord {
+  beneficiary_id: string
+  name: string
+  village?: string
+  household?: string
+  phone?: string
+  pregnancy_status?: string
+  pregnancy_month?: number
+  beneficiary_type?: string
+  category?: string
+  last_visit_date?: string
+  next_visit_date?: string
+}
+
+interface IdentityResult {
+  found: boolean
+  beneficiary_id?: string
+  spoken_id?: string
+  spoken_name?: string
+  name_match: boolean
+  name_match_quality: string
+  existing_beneficiary?: BeneficiaryRecord
+  warning_message?: string
+}
+
+function getBeneficiaryCategory(b?: BeneficiaryRecord | null): 'pregnant_woman' | 'newborn' | 'immunization_child' {
+  if (!b) return 'pregnant_woman'
+  const cat = (b.category || b.beneficiary_type || '').toLowerCase()
+  if (cat.includes('preg') || cat.includes('maternal')) return 'pregnant_woman'
+  if (cat.includes('newb') || cat.includes('infant')) return 'newborn'
+  if (cat.includes('imm') || cat.includes('child')) return 'immunization_child'
+  const bid = (b.beneficiary_id || '').toUpperCase()
+  if (bid.startsWith('PREG')) return 'pregnant_woman'
+  if (bid.startsWith('NEWB')) return 'newborn'
+  if (bid.startsWith('IMM')) return 'immunization_child'
+  if (b.pregnancy_status === 'pregnant') return 'pregnant_woman'
+  return 'pregnant_woman'
+}
+
+const FIELD_LABELS: Record<string, string> = {
+  // Pregnant Woman
+  weight_kg: 'Current Weight (kg)',
+  blood_pressure: 'Blood Pressure (mmHg)',
+  blood_pressure_systolic: 'BP Systolic (mmHg)',
+  blood_pressure_diastolic: 'BP Diastolic (mmHg)',
+  hb_level: 'Haemoglobin Level (g/dL)',
+  blood_sugar_level: 'Blood Sugar Level (mg/dL)',
+  vaginal_bleeding: 'Vaginal Bleeding',
+  severe_headache_blurred_vision: 'Severe Headache or Blurred Vision',
+  fetal_movement: 'Fetal Movement',
+  ifa_calcium_consumption: 'IFA and Calcium Tablet Consumption',
+  pregnancy_month: 'Pregnancy Month',
+  visit_date: 'Visit Date',
+  next_visit_date: 'Next Visit Date',
+
+  // Newborn
+  temperature_celsius: 'Body Temperature (°C)',
+  respiratory_rate: 'Respiratory Rate (breaths/min)',
+  breastfeeding_status: 'Breastfeeding Status',
+  difficulty_in_feeding: 'Difficulty in Feeding',
+  difficulty_in_breathing: 'Difficulty in Breathing',
+  yellowing_skin_eyes: 'Yellowing of Skin or Eyes',
+  umbilical_cord_condition: 'Umbilical Cord Condition',
+  age_days: 'Age in Days',
+
+  // Immunization
+  height_cm: 'Current Height / Length (cm)',
+  general_health_condition: 'General Health Condition',
+  vaccines_due_today: 'Vaccines Due Today',
+  vaccines_given_today: 'Vaccines Given Today',
+  missed_vaccination_doses: 'Missed Vaccination Doses',
+  previous_aefi: 'Previous AEFI',
+  next_vaccination_due_date: 'Next Vaccination Due Date',
+}
+
+export default function RevisitPage() {
+  const [stage, setStage] = useState<Stage>('identify')
+  const [language, setLanguage] = useState<'ta' | 'hi' | 'en'>('ta')
+  
+  // Voice Recording state
+  const [isRecording, setIsRecording] = useState(false)
+  const [recordingField, setRecordingField] = useState<string | null>(null)
+  const [recordingTime, setRecordingTime] = useState(0)
+  const [processing, setProcessing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // Stage 1 & 2: Identity
+  const [identityTranscript, setIdentityTranscript] = useState('')
+  const [identityResult, setIdentityResult] = useState<IdentityResult | null>(null)
+  const [manualIdInput, setManualIdInput] = useState('')
+  const [verifiedBeneficiary, setVerifiedBeneficiary] = useState<BeneficiaryRecord | null>(null)
+
+  // Stage 3 & 4: Clinical
+  const [clinicalTranscript, setClinicalTranscript] = useState('')
+  const [clinicalEnglishTranscript, setClinicalEnglishTranscript] = useState('')
+  const [draftId, setDraftId] = useState<string | null>(null)
+  const [visitRecord, setVisitRecord] = useState<any | null>(null)
+  const [missingFields, setMissingFields] = useState<string[]>([])
+  const [dangerFlag, setDangerFlag] = useState(false)
+  const [dangerResults, setDangerResults] = useState<any[]>([])
+  const [readbackText, setReadbackText] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [savedVisitId, setSavedVisitId] = useState<string | null>(null)
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+  const timerRef = useRef<any>(null)
+
+  // ── Recording Handlers ──────────────────────────────────────────────────
+  async function startRecording(target: 'identity' | 'clinical' | string) {
+    setError(null)
+    audioChunksRef.current = []
+
+    if (target !== 'identity' && target !== 'clinical') {
+      setRecordingField(target)
+    } else {
+      setRecordingField(null)
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+      mediaRecorderRef.current = recorder
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data)
+      }
+
+      recorder.onstop = () => {
+        if (target === 'identity') {
+          handleIdentityAudioReady()
+        } else if (target === 'clinical') {
+          handleClinicalAudioReady()
+        } else {
+          handleFieldAudioReady(target)
+        }
+      }
+
+      recorder.start()
+      setIsRecording(true)
+      setRecordingTime(0)
+
+      timerRef.current = setInterval(() => {
+        setRecordingTime((t) => t + 1)
+      }, 1000)
+    } catch (err: any) {
+      setError('Microphone access denied or unavailable.')
+      setRecordingField(null)
+    }
+  }
+
+  function stopRecording() {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop()
+      mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop())
+      setIsRecording(false)
+      clearInterval(timerRef.current)
+    }
+  }
+
+  // ── Identity Speech Processing ──────────────────────────────────────────
+  async function handleIdentityAudioReady() {
+    if (audioChunksRef.current.length === 0) return
+    setProcessing(true)
+    setError(null)
+
+    try {
+      const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+      const formData = new FormData()
+      formData.append('audio', audioBlob, 'revisit_id.webm')
+      formData.append('language', language)
+
+      const transRes = await voiceAPI.transcribe(formData)
+      const spokenText = transRes.data?.transcript || ''
+      setIdentityTranscript(spokenText)
+
+      await processIdentityTranscript(spokenText)
+    } catch (err: any) {
+      setError(err?.response?.data?.error || err.message || 'Identity voice processing failed.')
+    } finally {
+      setProcessing(false)
+    }
+  }
+
+  async function processIdentityTranscript(text: string) {
+    if (!text.trim()) return
+    setProcessing(true)
+    setError(null)
+    try {
+      const res = await revisitAPI.init({ transcript: text, language })
+      setIdentityResult(res.data)
+      setStage('verify')
+    } catch (err: any) {
+      setError(err?.response?.data?.error || 'Identity extraction failed.')
+    } finally {
+      setProcessing(false)
+    }
+  }
+
+  async function handleManualLookup() {
+    if (!manualIdInput.trim()) return
+    setProcessing(true)
+    setError(null)
+    try {
+      const res = await beneficiaryAPI.lookup(manualIdInput.trim())
+      if (res.data?.found) {
+        setIdentityResult({
+          found: true,
+          beneficiary_id: res.data.beneficiary.beneficiary_id,
+          spoken_name: res.data.beneficiary.name,
+          name_match: true,
+          name_match_quality: 'manual_lookup',
+          existing_beneficiary: res.data.beneficiary,
+        })
+        setStage('verify')
+      } else {
+        setError(`No active beneficiary found with ID ${manualIdInput}`)
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.message || 'Beneficiary lookup failed.')
+    } finally {
+      setProcessing(false)
+    }
+  }
+
+  function confirmIdentity() {
+    if (!identityResult?.existing_beneficiary) return
+    setVerifiedBeneficiary(identityResult.existing_beneficiary)
+    setStage('clinical')
+  }
+
+  // ── Clinical Speech Processing ──────────────────────────────────────────
+  async function handleClinicalAudioReady() {
+    if (audioChunksRef.current.length === 0 || !verifiedBeneficiary) return
+    setProcessing(true)
+    setError(null)
+
+    try {
+      const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+      const formData = new FormData()
+      formData.append('audio', audioBlob, 'revisit_clinical.webm')
+      formData.append('language', language)
+
+      const transRes = await voiceAPI.transcribe(formData)
+      const spokenText = transRes.data?.transcript || ''
+      setClinicalTranscript(spokenText)
+
+      await processClinicalTranscript(spokenText)
+    } catch (err: any) {
+      setError(err?.response?.data?.error || err.message || 'Clinical voice processing failed.')
+    } finally {
+      setProcessing(false)
+    }
+  }
+
+  async function processClinicalTranscript(text: string) {
+    if (!text.trim() || !verifiedBeneficiary) return
+    setProcessing(true)
+    setError(null)
+
+    try {
+      const bCat = getBeneficiaryCategory(verifiedBeneficiary)
+      const res = await revisitAPI.extract({
+        transcript: text,
+        beneficiary_id: verifiedBeneficiary.beneficiary_id,
+        beneficiary_type: bCat,
+        language,
+      })
+
+      const data = res.data
+      setDraftId(data.draft_id)
+      setVisitRecord(data.record)
+      setMissingFields(data.missing_fields || [])
+      setDangerFlag(data.danger_flag || false)
+      setDangerResults(data.danger_detection_results || [])
+      setReadbackText(data.readback_text || null)
+      setClinicalEnglishTranscript(data.record?.english_transcript || text)
+      setStage('review')
+    } catch (err: any) {
+      setError(err?.response?.data?.error || 'Clinical extraction failed.')
+    } finally {
+      setProcessing(false)
+    }
+  }
+
+  // ── Single-Field Voice Capture ─────────────────────────────────────────
+  async function handleFieldAudioReady(fieldName: string) {
+    if (audioChunksRef.current.length === 0) {
+      setRecordingField(null)
+      return
+    }
+    setProcessing(true)
+    setError(null)
+
+    try {
+      const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+      const formData = new FormData()
+      formData.append('audio', audioBlob, 'field_revisit.webm')
+      formData.append('language', language)
+
+      const transRes = await voiceAPI.transcribe(formData)
+      const spoken = (transRes.data?.transcript || '').trim()
+
+      if (spoken) {
+        const bCat = getBeneficiaryCategory(verifiedBeneficiary)
+        const extRes = await revisitAPI.extractField({
+          field: fieldName,
+          transcript: spoken,
+          category: bCat,
+          draft_id: draftId || undefined,
+          language,
+        })
+
+        const extractedInfo = extRes.data?.extracted_info || {}
+        const val = extRes.data?.value ?? extractedInfo?.value
+
+        if (val !== null && val !== undefined && val !== '') {
+          const updated = { ...visitRecord, [fieldName]: val }
+          for (const [k, v] of Object.entries(extractedInfo)) {
+            if (k !== 'field' && k !== 'value' && k !== 'raw_transcript' && v !== null && v !== undefined) {
+              updated[k] = v
+            }
+          }
+          setVisitRecord(updated)
+
+          if (extRes.data?.missing_fields) {
+            setMissingFields(extRes.data.missing_fields)
+          } else {
+            setMissingFields((prev) => prev.filter((f) => f !== fieldName))
+          }
+        } else {
+          const numericOrDate = [
+            'weight_kg', 'hb_level', 'blood_sugar_level', 'temperature_celsius',
+            'respiratory_rate', 'height_cm', 'visit_date', 'next_visit_date', 'next_vaccination_due_date'
+          ]
+          if (!numericOrDate.includes(fieldName)) {
+            handleRecordFieldChange(fieldName, spoken)
+          } else {
+            setError(`Could not extract a valid value for ${FIELD_LABELS[fieldName] || fieldName} from "${spoken}". Please try again or type manually.`)
+          }
+        }
+      }
+    } catch (err: any) {
+      setError(`Failed to capture answer for ${FIELD_LABELS[fieldName] || fieldName}.`)
+    } finally {
+      setProcessing(false)
+      setRecordingField(null)
+    }
+  }
+
+  function handleRecordFieldChange(field: string, value: any) {
+    if (!visitRecord) return
+    const updated = { ...visitRecord, [field]: value }
+    setVisitRecord(updated)
+    setMissingFields((prev) => prev.filter((f) => f !== field))
+  }
+
+  // ── Save Confirm ────────────────────────────────────────────────────────
+  async function handleConfirmSave() {
+    if (!draftId || !visitRecord) return
+    setSaving(true)
+    setError(null)
+
+    try {
+      // 1. Synchronize all category fields to the backend draft session
+      const fieldsToSync = [
+        'visit_date',
+        'next_visit_date',
+        'weight_kg',
+        // Pregnant woman
+        'blood_pressure',
+        'blood_pressure_systolic',
+        'blood_pressure_diastolic',
+        'hb_level',
+        'blood_sugar_level',
+        'vaginal_bleeding',
+        'severe_headache_blurred_vision',
+        'fetal_movement',
+        'ifa_calcium_consumption',
+        'pregnancy_month',
+        'ifa_given',
+        'calcium_given',
+        // Newborn
+        'temperature_celsius',
+        'respiratory_rate',
+        'breastfeeding_status',
+        'difficulty_in_feeding',
+        'difficulty_in_breathing',
+        'yellowing_skin_eyes',
+        'umbilical_cord_condition',
+        'age_days',
+        // Immunization
+        'height_cm',
+        'general_health_condition',
+        'vaccines_due_today',
+        'vaccines_given_today',
+        'missed_vaccination_doses',
+        'previous_aefi',
+        'next_vaccination_due_date',
+      ]
+
+      for (const f of fieldsToSync) {
+        if (visitRecord[f] !== undefined && visitRecord[f] !== null) {
+          try {
+            await visitAPI.addDraftField(draftId, { field: f, value: visitRecord[f] })
+          } catch {
+            // Ignore individual sync errors; let confirmDraft enforce validation
+          }
+        }
+      }
+
+      // 2. Confirm and save the draft to MongoDB
+      const res = await visitAPI.confirmDraft(draftId)
+      setSavedVisitId(res.data?.visit?._id || res.data?.visit?.id || draftId)
+      setStage('saved')
+    } catch (err: any) {
+      const resp = err?.response?.data
+      const reasons = resp?.blocking_reasons?.length ? resp.blocking_reasons.join('; ') : ''
+      const missing = resp?.missing_fields?.length ? `Missing: ${resp.missing_fields.join(', ')}` : ''
+      const msg = [resp?.error, reasons, missing].filter(Boolean).join(' — ') || 'Failed to save revisit.'
+      setError(msg)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function resetAll() {
+    setStage('identify')
+    setIdentityTranscript('')
+    setIdentityResult(null)
+    setManualIdInput('')
+    setVerifiedBeneficiary(null)
+    setClinicalTranscript('')
+    setClinicalEnglishTranscript('')
+    setDraftId(null)
+    setVisitRecord(null)
+    setMissingFields([])
+    setDangerFlag(false)
+    setDangerResults([])
+    setReadbackText(null)
+    setError(null)
+    setSavedVisitId(null)
+    setRecordingField(null)
+  }
+
+  // ── Field Header Helper Component ───────────────────────────────────────
+  function FieldHeader({
+    label,
+    fieldKey,
+    required = true,
+  }: {
+    label: string
+    fieldKey: string
+    required?: boolean
+  }) {
+    const isThisFieldRecording = isRecording && recordingField === fieldKey
+    return (
+      <div className="flex items-center justify-between mb-1.5">
+        <label className="text-xs font-semibold text-gray-700 flex items-center gap-1">
+          <span>{label}</span>
+          {required && <span className="text-red-500 font-bold">*</span>}
+        </label>
+        <button
+          type="button"
+          onClick={() => {
+            if (isThisFieldRecording) {
+              stopRecording()
+            } else {
+              startRecording(fieldKey)
+            }
+          }}
+          disabled={processing || (isRecording && !isThisFieldRecording)}
+          title={`Speak ${label}`}
+          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium transition ${
+            isThisFieldRecording
+              ? 'bg-red-600 text-white animate-pulse'
+              : 'bg-green-50 text-green-700 hover:bg-green-100 border border-green-200'
+          }`}
+        >
+          {isThisFieldRecording ? (
+            <>
+              <Square className="w-3 h-3 fill-current" />
+              <span>Stop ({recordingTime}s)</span>
+            </>
+          ) : (
+            <>
+              <Mic className="w-3 h-3" />
+              <span>Speak</span>
+            </>
+          )}
+        </button>
+      </div>
+    )
+  }
+
+  const category = getBeneficiaryCategory(verifiedBeneficiary)
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-6">
+      {/* Top Header */}
+      <div className="bg-white rounded-2xl p-6 shadow-sm border border-green-100 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 text-green-700 font-semibold text-sm mb-1">
+            <Stethoscope className="w-5 h-5" />
+            <span>Revisit Bar</span>
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">Existing Beneficiary Revisit</h1>
+          <p className="text-sm text-gray-500">
+            Voice-driven identity verification & category-based clinical revisit observations
+          </p>
+        </div>
+
+        {/* Language selector */}
+        <div className="flex items-center gap-2 bg-green-50 p-1.5 rounded-xl border border-green-200">
+          <span className="text-xs font-semibold text-green-800 px-2">Voice:</span>
+          {(['ta', 'hi', 'en'] as const).map((lang) => (
+            <button
+              key={lang}
+              onClick={() => setLanguage(lang)}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${
+                language === lang ? 'bg-green-700 text-white shadow-sm' : 'text-gray-600 hover:text-green-800'
+              }`}
+            >
+              {lang === 'ta' ? 'தமிழ்' : lang === 'hi' ? 'हिंदी' : 'English'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Progress Steps */}
+      <div className="grid grid-cols-4 gap-2 text-center text-xs font-semibold">
+        <div className={`p-2.5 rounded-xl border transition ${stage === 'identify' ? 'bg-green-700 text-white border-green-700 shadow-sm' : 'bg-white text-gray-500 border-gray-200'}`}>
+          1. Identity Voice
+        </div>
+        <div className={`p-2.5 rounded-xl border transition ${stage === 'verify' ? 'bg-green-700 text-white border-green-700 shadow-sm' : 'bg-white text-gray-500 border-gray-200'}`}>
+          2. Verify Identity
+        </div>
+        <div className={`p-2.5 rounded-xl border transition ${stage === 'clinical' ? 'bg-green-700 text-white border-green-700 shadow-sm' : 'bg-white text-gray-500 border-gray-200'}`}>
+          3. Clinical Voice
+        </div>
+        <div className={`p-2.5 rounded-xl border transition ${stage === 'review' || stage === 'saved' ? 'bg-green-700 text-white border-green-700 shadow-sm' : 'bg-white text-gray-500 border-gray-200'}`}>
+          4. Review & Save
+        </div>
+      </div>
+
+      {/* Error display */}
+      {error && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex items-start gap-2">
+          <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+          <div className="flex-1">{error}</div>
+        </div>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────────── */}
+      {/* STAGE 1: Identity Voice Lookup */}
+      {/* ─────────────────────────────────────────────────────────────────── */}
+      {stage === 'identify' && (
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-green-100 space-y-6">
+          <div className="text-center space-y-3">
+            <h2 className="text-lg font-bold text-gray-900">Step 1: Speak Beneficiary ID or Name</h2>
+            <p className="text-sm text-gray-500">
+              Speak the beneficiary ID (e.g. "PREG zero one" or "Meena") to look up their record
+            </p>
+
+            <div className="pt-2">
+              <button
+                onClick={isRecording ? stopRecording : () => startRecording('identity')}
+                disabled={processing}
+                className={`w-20 h-20 rounded-full flex items-center justify-center transition-all shadow-lg mx-auto ${
+                  isRecording && !recordingField ? 'bg-red-600 text-white animate-pulse scale-105' : 'bg-green-700 text-white hover:bg-green-800'
+                }`}
+              >
+                {isRecording && !recordingField ? <Square className="w-8 h-8" /> : <Mic className="w-8 h-8" />}
+              </button>
+
+              <div className="mt-3">
+                {isRecording && !recordingField ? (
+                  <span className="text-sm font-semibold text-red-600">Recording... {recordingTime}s</span>
+                ) : processing ? (
+                  <span className="text-sm font-semibold text-gray-600 flex items-center justify-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin text-green-700" />
+                    Recognizing beneficiary identity...
+                  </span>
+                ) : (
+                  <span className="text-sm font-medium text-gray-600">
+                    Click mic and say: "Revisit for Lakshmi, ID PREG-123456"
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Fallback manual search input */}
+          <div className="pt-4 border-t border-gray-100 flex items-center gap-3 max-w-md mx-auto">
+            <div className="relative flex-1">
+              <input
+                type="text"
+                placeholder="Or type ID (e.g. PREG-123456 or BEN001)"
+                value={manualIdInput}
+                onChange={(e) => setManualIdInput(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-200 rounded-xl text-sm uppercase focus:border-green-600"
+              />
+            </div>
+            <button
+              onClick={handleManualLookup}
+              disabled={processing || !manualIdInput.trim()}
+              className="px-4 py-2 bg-green-700 text-white rounded-xl text-sm font-semibold hover:bg-green-800 disabled:opacity-50 transition flex items-center gap-1.5"
+            >
+              <Search className="w-4 h-4" />
+              <span>Lookup</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────────── */}
+      {/* STAGE 2: Verify Identity */}
+      {/* ─────────────────────────────────────────────────────────────────── */}
+      {stage === 'verify' && identityResult && (
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-green-100 space-y-6">
+          <div className="flex items-center justify-between border-b border-gray-100 pb-4">
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">Step 2: Verify Beneficiary Identity</h2>
+              <p className="text-xs text-gray-500">
+                Confirm this is the intended patient before recording clinical details
+              </p>
+            </div>
+          </div>
+
+          {/* Case 1: ID NOT FOUND */}
+          {!identityResult.found && (
+            <div className="p-5 bg-red-50 border-2 border-red-300 rounded-2xl space-y-3">
+              <div className="flex items-center gap-2 text-red-800 font-bold">
+                <ShieldAlert className="w-6 h-6 text-red-600" />
+                <span>Beneficiary Not Found in Database</span>
+              </div>
+              <p className="text-sm text-red-700">{identityResult.warning_message}</p>
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  onClick={() => setStage('identify')}
+                  className="px-4 py-2 bg-red-700 text-white rounded-xl text-sm font-semibold hover:bg-red-800 transition"
+                >
+                  Try Again
+                </button>
+                <Link
+                  to="/register"
+                  className="px-4 py-2 border border-red-300 text-red-800 rounded-xl text-sm font-semibold hover:bg-red-100 transition"
+                >
+                  Register as New Beneficiary
+                </Link>
+              </div>
+            </div>
+          )}
+
+          {/* Case 2: ID FOUND */}
+          {identityResult.found && identityResult.existing_beneficiary && (
+            <div className="space-y-4">
+              {!identityResult.name_match && (
+                <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <h3 className="font-bold text-amber-900 text-sm">Identity Caution</h3>
+                    <p className="text-xs text-amber-800 mt-1">{identityResult.warning_message}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Beneficiary Card */}
+              <div className="bg-green-50/60 p-5 rounded-2xl border border-green-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 bg-green-700 text-white rounded-xl flex items-center justify-center font-bold text-lg">
+                      {identityResult.existing_beneficiary.name[0]}
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-gray-900">{identityResult.existing_beneficiary.name}</h3>
+                      <span className="text-xs font-mono font-semibold text-green-800 bg-green-100 px-2 py-0.5 rounded-md">
+                        {identityResult.existing_beneficiary.beneficiary_id}
+                      </span>
+                    </div>
+                  </div>
+                  <span className="px-3 py-1 bg-white border border-green-300 rounded-full text-xs font-semibold text-green-800 capitalize">
+                    {getBeneficiaryCategory(identityResult.existing_beneficiary).replace('_', ' ')}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs pt-3 border-t border-green-200">
+                  <div>
+                    <span className="text-gray-500 block">Village</span>
+                    <span className="font-semibold text-gray-800">{identityResult.existing_beneficiary.village || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 block">Phone</span>
+                    <span className="font-semibold text-gray-800">{identityResult.existing_beneficiary.phone || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 block">Pregnancy Status</span>
+                    <span className="font-semibold text-gray-800 capitalize">{identityResult.existing_beneficiary.pregnancy_status || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 block">Last Visit</span>
+                    <span className="font-semibold text-gray-800">{identityResult.existing_beneficiary.last_visit_date || 'None'}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Confirmation Buttons */}
+              <div className="flex items-center justify-end gap-3 pt-3">
+                <button
+                  onClick={() => setStage('identify')}
+                  className="px-4 py-2 border border-gray-200 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-50 transition"
+                >
+                  Wrong Patient / Re-try
+                </button>
+                <button
+                  onClick={confirmIdentity}
+                  className="px-6 py-2.5 bg-green-700 text-white rounded-xl text-sm font-semibold hover:bg-green-800 flex items-center gap-2 shadow-sm transition"
+                >
+                  <UserCheck className="w-4 h-4" />
+                  <span>Confirm Identity & Proceed</span>
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────────── */}
+      {/* STAGE 3: Clinical Voice Capture */}
+      {/* ─────────────────────────────────────────────────────────────────── */}
+      {stage === 'clinical' && verifiedBeneficiary && (
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-green-100 space-y-6">
+          <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+            <div>
+              <span className="text-xs font-semibold text-green-700 uppercase">Patient Confirmed</span>
+              <h2 className="text-lg font-bold text-gray-900">
+                {verifiedBeneficiary.name} ({verifiedBeneficiary.beneficiary_id})
+              </h2>
+            </div>
+            <span className="text-xs bg-green-100 text-green-800 font-semibold px-2.5 py-1 rounded-lg capitalize">
+              {category.replace('_', ' ')} Revisit
+            </span>
+          </div>
+
+          <div className="text-center space-y-3 py-4">
+            <h3 className="text-base font-bold text-gray-800">Step 3: Speak Clinical Observations</h3>
+            <p className="text-xs text-gray-500 max-w-md mx-auto">
+              Speak the 8 mandatory observations naturally in {language === 'ta' ? 'Tamil' : language === 'hi' ? 'Hindi' : 'English'}.
+            </p>
+
+            <div className="pt-2">
+              <button
+                onClick={isRecording ? stopRecording : () => startRecording('clinical')}
+                disabled={processing}
+                className={`w-20 h-20 rounded-full flex items-center justify-center transition-all shadow-lg mx-auto ${
+                  isRecording && !recordingField ? 'bg-red-600 text-white animate-pulse scale-105' : 'bg-green-700 text-white hover:bg-green-800'
+                }`}
+              >
+                {isRecording && !recordingField ? <Square className="w-8 h-8" /> : <Mic className="w-8 h-8" />}
+              </button>
+
+              <div className="mt-3">
+                {isRecording && !recordingField ? (
+                  <span className="text-sm font-semibold text-red-600">Recording... {recordingTime}s</span>
+                ) : processing ? (
+                  <span className="text-sm font-semibold text-gray-600 flex items-center justify-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin text-green-700" />
+                    Extracting clinical observations & danger signs...
+                  </span>
+                ) : (
+                  <span className="text-sm font-medium text-gray-600">
+                    Click mic and speak full visit observations
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Helpful Category-specific guidance */}
+            <div className="text-xs text-gray-600 bg-green-50/70 p-3 rounded-xl border border-green-200 max-w-lg mx-auto text-left">
+              <span className="font-bold text-green-900 block mb-1">
+                Mandatory Observations for {category === 'pregnant_woman' ? 'Pregnant Woman' : category === 'newborn' ? 'Newborn' : 'Immunization'}:
+              </span>
+              {category === 'pregnant_woman' && (
+                <ol className="list-decimal pl-4 space-y-0.5 text-gray-700">
+                  <li>Weight (kg) &bull; 2. Blood Pressure (mmHg)</li>
+                  <li>Haemoglobin Level (g/dL) &bull; 4. Blood Sugar Level (mg/dL)</li>
+                  <li>Vaginal Bleeding &bull; 6. Severe Headache / Blurred Vision</li>
+                  <li>Fetal Movement &bull; 8. IFA and Calcium Consumption</li>
+                </ol>
+              )}
+              {category === 'newborn' && (
+                <ol className="list-decimal pl-4 space-y-0.5 text-gray-700">
+                  <li>Weight (kg) &bull; 2. Body Temperature (°C)</li>
+                  <li>Respiratory Rate (breaths/min) &bull; 4. Breastfeeding Status</li>
+                  <li>Difficulty in Feeding &bull; 6. Difficulty in Breathing</li>
+                  <li>Yellowing of Skin/Eyes &bull; 8. Umbilical Cord Condition</li>
+                </ol>
+              )}
+              {category === 'immunization_child' && (
+                <ol className="list-decimal pl-4 space-y-0.5 text-gray-700">
+                  <li>Weight (kg) &bull; 2. Height/Length (cm)</li>
+                  <li>General Health Condition &bull; 4. Vaccines Due Today</li>
+                  <li>Vaccines Given Today &bull; 6. Missed Vaccination Doses</li>
+                  <li>Previous AEFI &bull; 8. Next Vaccination Due Date</li>
+                </ol>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────────── */}
+      {/* STAGE 4: Review Clinical Data & Save */}
+      {/* ─────────────────────────────────────────────────────────────────── */}
+      {stage === 'review' && visitRecord && verifiedBeneficiary && (
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-green-100 space-y-6">
+          <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+            <div>
+              <span className="text-xs font-semibold text-green-700 uppercase">Step 4: Clinical Review & Verification</span>
+              <h2 className="text-lg font-bold text-gray-900">
+                {verifiedBeneficiary.name} ({verifiedBeneficiary.beneficiary_id}) — {category.replace('_', ' ').toUpperCase()}
+              </h2>
+            </div>
+            <span className="text-xs bg-gray-100 text-gray-700 font-mono px-2 py-1 rounded">
+              Draft ID: {draftId?.slice(0, 8)}...
+            </span>
+          </div>
+
+          {/* Missing Fields Banner with Speak Buttons */}
+          {missingFields.length > 0 && (
+            <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-amber-900 font-bold text-sm">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+                  <span>Missing Mandatory Information ({missingFields.length} remaining)</span>
+                </div>
+                <span className="text-xs font-semibold text-amber-800 bg-amber-200/60 px-2 py-0.5 rounded-full">
+                  Speak missing field to fill directly
+                </span>
+              </div>
+              <p className="text-xs text-amber-800">
+                Please complete the missing mandatory observations. Click <strong>Speak</strong> to speak just that value, or type it into the form below:
+              </p>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {missingFields.map((f) => {
+                  const isRec = isRecording && recordingField === f
+                  return (
+                    <div
+                      key={f}
+                      className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-amber-300 shadow-xs text-xs"
+                    >
+                      <span className="font-semibold text-gray-800">{FIELD_LABELS[f] || f.replace(/_/g, ' ')}</span>
+                      <button
+                        type="button"
+                        onClick={() => (isRec ? stopRecording() : startRecording(f))}
+                        disabled={processing || (isRecording && !isRec)}
+                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
+                          isRec
+                            ? 'bg-red-600 text-white animate-pulse'
+                            : 'bg-green-700 text-white hover:bg-green-800 shadow-xs'
+                        }`}
+                      >
+                        {isRec ? (
+                          <>
+                            <Square className="w-3 h-3 fill-current" />
+                            <span>Stop ({recordingTime}s)</span>
+                          </>
+                        ) : (
+                          <>
+                            <Mic className="w-3 h-3" />
+                            <span>Speak</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Danger sign alert if triggered */}
+          {dangerFlag && (
+            <div className="bg-red-50 border-2 border-red-500 rounded-2xl p-5 space-y-2">
+              <div className="flex items-center gap-2 text-red-900 font-bold">
+                <AlertTriangle className="w-6 h-6 text-red-600" />
+                <span>HIGH PRIORITY CLINICAL DANGER SIGNS DETECTED</span>
+              </div>
+              <p className="text-xs text-red-800">
+                Deterministic clinical rules identified danger signs. Immediate medical referral recommended:
+              </p>
+              <div className="space-y-1">
+                {dangerResults.map((d, i) => (
+                  <div key={i} className="text-xs font-semibold text-red-900 bg-white/70 p-2 rounded-lg border border-red-200">
+                    ⚠ {d.name} {d.referral_message_en && `— ${d.referral_message_en}`}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Readback banner */}
+          {readbackText && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-xs text-blue-900">
+              <span className="font-bold block mb-1">ASHA Read-back Summary:</span>
+              <p className="italic">{readbackText}</p>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════════════════ */}
+          {/* CATEGORY 1: PREGNANT WOMAN CLINICAL FORM (8 Mandatory Fields) */}
+          {/* ══════════════════════════════════════════════════════════════════ */}
+          {category === 'pregnant_woman' && (
+            <div className="space-y-4">
+              <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2 border-b pb-2">
+                <span className="w-2.5 h-2.5 bg-green-600 rounded-full"></span>
+                <span>Pregnant Woman Revisit Observations (8 Mandatory Fields)</span>
+              </h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                {/* 1. Current Weight */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('weight_kg') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="1. Current Weight (kg)" fieldKey="weight_kg" />
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={visitRecord.weight_kg ?? ''}
+                    onChange={(e) => handleRecordFieldChange('weight_kg', parseFloat(e.target.value) || null)}
+                    placeholder="e.g. 58.5"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  />
+                </div>
+
+                {/* 2. Blood Pressure */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('blood_pressure') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="2. Blood Pressure (mmHg)" fieldKey="blood_pressure" />
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      placeholder="Sys (120)"
+                      value={visitRecord.blood_pressure_systolic ?? ''}
+                      onChange={(e) => {
+                        const sys = parseInt(e.target.value) || null
+                        handleRecordFieldChange('blood_pressure_systolic', sys)
+                        if (sys && visitRecord.blood_pressure_diastolic) {
+                          handleRecordFieldChange('blood_pressure', `${sys}/${visitRecord.blood_pressure_diastolic}`)
+                        }
+                      }}
+                      className="w-1/2 px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                    />
+                    <span className="text-gray-500 font-bold">/</span>
+                    <input
+                      type="number"
+                      placeholder="Dia (80)"
+                      value={visitRecord.blood_pressure_diastolic ?? ''}
+                      onChange={(e) => {
+                        const dia = parseInt(e.target.value) || null
+                        handleRecordFieldChange('blood_pressure_diastolic', dia)
+                        if (visitRecord.blood_pressure_systolic && dia) {
+                          handleRecordFieldChange('blood_pressure', `${visitRecord.blood_pressure_systolic}/${dia}`)
+                        }
+                      }}
+                      className="w-1/2 px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                    />
+                  </div>
+                </div>
+
+                {/* 3. Haemoglobin Level */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('hb_level') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="3. Haemoglobin (g/dL)" fieldKey="hb_level" />
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={visitRecord.hb_level ?? ''}
+                    onChange={(e) => handleRecordFieldChange('hb_level', parseFloat(e.target.value) || null)}
+                    placeholder="e.g. 11.5"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  />
+                </div>
+
+                {/* 4. Blood Sugar Level */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('blood_sugar_level') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="4. Blood Sugar (mg/dL)" fieldKey="blood_sugar_level" />
+                  <input
+                    type="number"
+                    step="1"
+                    value={visitRecord.blood_sugar_level ?? ''}
+                    onChange={(e) => handleRecordFieldChange('blood_sugar_level', parseFloat(e.target.value) || null)}
+                    placeholder="e.g. 95"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  />
+                </div>
+
+                {/* 5. Vaginal Bleeding */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('vaginal_bleeding') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="5. Vaginal Bleeding" fieldKey="vaginal_bleeding" />
+                  <select
+                    value={visitRecord.vaginal_bleeding || ''}
+                    onChange={(e) => handleRecordFieldChange('vaginal_bleeding', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  >
+                    <option value="">Select status</option>
+                    <option value="No">No / None (Normal)</option>
+                    <option value="Yes">Yes (High Risk / Danger Sign!)</option>
+                    <option value="Spotting">Mild Spotting</option>
+                  </select>
+                </div>
+
+                {/* 6. Severe Headache or Blurred Vision */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('severe_headache_blurred_vision') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="6. Severe Headache / Blurred Vision" fieldKey="severe_headache_blurred_vision" />
+                  <select
+                    value={visitRecord.severe_headache_blurred_vision || ''}
+                    onChange={(e) => handleRecordFieldChange('severe_headache_blurred_vision', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  >
+                    <option value="">Select status</option>
+                    <option value="No">No (Normal)</option>
+                    <option value="Yes">Yes (Danger Sign / Pre-eclampsia risk)</option>
+                    <option value="Mild Headache">Mild Headache only</option>
+                  </select>
+                </div>
+
+                {/* 7. Fetal Movement */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('fetal_movement') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="7. Fetal Movement" fieldKey="fetal_movement" />
+                  <select
+                    value={visitRecord.fetal_movement || ''}
+                    onChange={(e) => handleRecordFieldChange('fetal_movement', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  >
+                    <option value="">Select movement</option>
+                    <option value="Normal">Normal (Active)</option>
+                    <option value="Reduced">Reduced (Needs Attention)</option>
+                    <option value="Absent">Absent (Emergency Danger Sign!)</option>
+                  </select>
+                </div>
+
+                {/* 8. IFA and Calcium Tablet Consumption */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('ifa_calcium_consumption') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="8. IFA & Calcium Consumption" fieldKey="ifa_calcium_consumption" />
+                  <select
+                    value={visitRecord.ifa_calcium_consumption || (visitRecord.ifa_given ? 'Both Consumed Regularly' : '')}
+                    onChange={(e) => {
+                      const val = e.target.value
+                      handleRecordFieldChange('ifa_calcium_consumption', val)
+                      if (val.includes('Both') || val.includes('Yes')) {
+                        handleRecordFieldChange('ifa_given', true)
+                        handleRecordFieldChange('calcium_given', true)
+                      }
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  >
+                    <option value="">Select consumption</option>
+                    <option value="Both Consumed Regularly">Both Consumed Regularly (100% compliant)</option>
+                    <option value="Only IFA Consumed">Only IFA Consumed</option>
+                    <option value="Only Calcium Consumed">Only Calcium Consumed</option>
+                    <option value="Irregular / Missed Doses">Irregular / Missed Doses</option>
+                    <option value="Not Consumed">Not Consumed</option>
+                  </select>
+                </div>
+
+                {/* Visit Date */}
+                <div className="p-3 rounded-xl border bg-gray-50/50 border-gray-200">
+                  <FieldHeader label="Visit Date" fieldKey="visit_date" />
+                  <input
+                    type="date"
+                    value={visitRecord.visit_date || ''}
+                    onChange={(e) => handleRecordFieldChange('visit_date', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  />
+                </div>
+
+                {/* Next Visit Date */}
+                <div className="p-3 rounded-xl border bg-gray-50/50 border-gray-200">
+                  <FieldHeader label="Next Visit Date" fieldKey="next_visit_date" required={false} />
+                  <input
+                    type="date"
+                    value={visitRecord.next_visit_date || ''}
+                    onChange={(e) => handleRecordFieldChange('next_visit_date', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  />
+                </div>
+
+                {/* Pregnancy Month */}
+                <div className="p-3 rounded-xl border bg-gray-50/50 border-gray-200">
+                  <FieldHeader label="Pregnancy Month (1-9)" fieldKey="pregnancy_month" required={false} />
+                  <input
+                    type="number"
+                    min="1"
+                    max="9"
+                    value={visitRecord.pregnancy_month ?? ''}
+                    onChange={(e) => handleRecordFieldChange('pregnancy_month', parseInt(e.target.value) || null)}
+                    placeholder="e.g. 7"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════════════════ */}
+          {/* CATEGORY 2: NEWBORN CLINICAL FORM (8 Mandatory Fields) */}
+          {/* ══════════════════════════════════════════════════════════════════ */}
+          {category === 'newborn' && (
+            <div className="space-y-4">
+              <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2 border-b pb-2">
+                <span className="w-2.5 h-2.5 bg-blue-600 rounded-full"></span>
+                <span>Newborn Revisit Observations (8 Mandatory Fields)</span>
+              </h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                {/* 1. Current Weight */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('weight_kg') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="1. Current Weight (kg)" fieldKey="weight_kg" />
+                  <input
+                    type="number"
+                    step="0.05"
+                    value={visitRecord.weight_kg ?? ''}
+                    onChange={(e) => handleRecordFieldChange('weight_kg', parseFloat(e.target.value) || null)}
+                    placeholder="e.g. 3.2"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  />
+                </div>
+
+                {/* 2. Body Temperature */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('temperature_celsius') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="2. Body Temperature (°C)" fieldKey="temperature_celsius" />
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={visitRecord.temperature_celsius ?? ''}
+                    onChange={(e) => handleRecordFieldChange('temperature_celsius', parseFloat(e.target.value) || null)}
+                    placeholder="e.g. 36.8"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  />
+                </div>
+
+                {/* 3. Respiratory Rate */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('respiratory_rate') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="3. Respiratory Rate (breaths/min)" fieldKey="respiratory_rate" />
+                  <input
+                    type="number"
+                    value={visitRecord.respiratory_rate ?? ''}
+                    onChange={(e) => handleRecordFieldChange('respiratory_rate', parseInt(e.target.value) || null)}
+                    placeholder="e.g. 45"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  />
+                </div>
+
+                {/* 4. Breastfeeding Status */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('breastfeeding_status') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="4. Breastfeeding Status" fieldKey="breastfeeding_status" />
+                  <select
+                    value={visitRecord.breastfeeding_status || ''}
+                    onChange={(e) => handleRecordFieldChange('breastfeeding_status', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  >
+                    <option value="">Select status</option>
+                    <option value="Exclusive Breastfeeding">Exclusive Breastfeeding (Normal)</option>
+                    <option value="Partial Breastfeeding">Partial Breastfeeding</option>
+                    <option value="Formula / Other Milk">Formula / Other Milk</option>
+                    <option value="Not Breastfeeding">Not Breastfeeding</option>
+                  </select>
+                </div>
+
+                {/* 5. Difficulty in Feeding */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('difficulty_in_feeding') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="5. Difficulty in Feeding" fieldKey="difficulty_in_feeding" />
+                  <select
+                    value={visitRecord.difficulty_in_feeding || ''}
+                    onChange={(e) => handleRecordFieldChange('difficulty_in_feeding', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  >
+                    <option value="">Select status</option>
+                    <option value="No">No (Feeds Well / Normal)</option>
+                    <option value="Yes">Yes (Unable to latch / Danger Sign)</option>
+                  </select>
+                </div>
+
+                {/* 6. Difficulty in Breathing */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('difficulty_in_breathing') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="6. Difficulty in Breathing" fieldKey="difficulty_in_breathing" />
+                  <select
+                    value={visitRecord.difficulty_in_breathing || ''}
+                    onChange={(e) => handleRecordFieldChange('difficulty_in_breathing', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  >
+                    <option value="">Select status</option>
+                    <option value="No">No (Normal Breathing)</option>
+                    <option value="Yes">Yes (Chest indrawing / Grunting - Emergency!)</option>
+                  </select>
+                </div>
+
+                {/* 7. Yellowing of Skin or Eyes */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('yellowing_skin_eyes') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="7. Yellowing of Skin / Eyes" fieldKey="yellowing_skin_eyes" />
+                  <select
+                    value={visitRecord.yellowing_skin_eyes || ''}
+                    onChange={(e) => handleRecordFieldChange('yellowing_skin_eyes', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  >
+                    <option value="">Select status</option>
+                    <option value="No">No (Normal Pinkish Skin)</option>
+                    <option value="Yes">Yes (Neonatal Jaundice - Danger Sign)</option>
+                  </select>
+                </div>
+
+                {/* 8. Umbilical Cord Condition */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('umbilical_cord_condition') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="8. Umbilical Cord Condition" fieldKey="umbilical_cord_condition" />
+                  <select
+                    value={visitRecord.umbilical_cord_condition || ''}
+                    onChange={(e) => handleRecordFieldChange('umbilical_cord_condition', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  >
+                    <option value="">Select condition</option>
+                    <option value="Clean & Dry">Clean & Dry (Normal)</option>
+                    <option value="Healed / Fallen Off">Healed / Fallen Off</option>
+                    <option value="Redness / Pus / Discharge">Redness / Pus / Discharge (Danger Sign!)</option>
+                  </select>
+                </div>
+
+                {/* Visit Date */}
+                <div className="p-3 rounded-xl border bg-gray-50/50 border-gray-200">
+                  <FieldHeader label="Visit Date" fieldKey="visit_date" />
+                  <input
+                    type="date"
+                    value={visitRecord.visit_date || ''}
+                    onChange={(e) => handleRecordFieldChange('visit_date', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  />
+                </div>
+
+                {/* Age in Days */}
+                <div className="p-3 rounded-xl border bg-gray-50/50 border-gray-200">
+                  <FieldHeader label="Age in Days" fieldKey="age_days" required={false} />
+                  <input
+                    type="number"
+                    value={visitRecord.age_days ?? ''}
+                    onChange={(e) => handleRecordFieldChange('age_days', parseInt(e.target.value) || null)}
+                    placeholder="e.g. 14"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  />
+                </div>
+
+                {/* Next Visit Date */}
+                <div className="p-3 rounded-xl border bg-gray-50/50 border-gray-200">
+                  <FieldHeader label="Next Visit Date" fieldKey="next_visit_date" required={false} />
+                  <input
+                    type="date"
+                    value={visitRecord.next_visit_date || ''}
+                    onChange={(e) => handleRecordFieldChange('next_visit_date', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════════════════ */}
+          {/* CATEGORY 3: IMMUNIZATION BENEFICIARY CLINICAL FORM (8 Mandatory Fields) */}
+          {/* ══════════════════════════════════════════════════════════════════ */}
+          {category === 'immunization_child' && (
+            <div className="space-y-4">
+              <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2 border-b pb-2">
+                <span className="w-2.5 h-2.5 bg-purple-600 rounded-full"></span>
+                <span>Immunization Beneficiary Revisit Observations (8 Mandatory Fields)</span>
+              </h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                {/* 1. Current Weight */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('weight_kg') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="1. Current Weight (kg)" fieldKey="weight_kg" />
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={visitRecord.weight_kg ?? ''}
+                    onChange={(e) => handleRecordFieldChange('weight_kg', parseFloat(e.target.value) || null)}
+                    placeholder="e.g. 8.4"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  />
+                </div>
+
+                {/* 2. Current Height / Length */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('height_cm') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="2. Current Height / Length (cm)" fieldKey="height_cm" />
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={visitRecord.height_cm ?? ''}
+                    onChange={(e) => handleRecordFieldChange('height_cm', parseFloat(e.target.value) || null)}
+                    placeholder="e.g. 72.0"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  />
+                </div>
+
+                {/* 3. General Health Condition */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('general_health_condition') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="3. General Health Condition" fieldKey="general_health_condition" />
+                  <select
+                    value={visitRecord.general_health_condition || ''}
+                    onChange={(e) => handleRecordFieldChange('general_health_condition', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  >
+                    <option value="">Select condition</option>
+                    <option value="Good / Active">Good / Active (Normal)</option>
+                    <option value="Fair">Fair / Alert</option>
+                    <option value="Fever / Sick">Fever / Sick (Defer or Review)</option>
+                    <option value="Lethargic / High Risk">Lethargic / High Risk (Refer)</option>
+                  </select>
+                </div>
+
+                {/* 4. Vaccines Due Today */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('vaccines_due_today') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="4. Vaccines Due Today" fieldKey="vaccines_due_today" />
+                  <input
+                    type="text"
+                    value={visitRecord.vaccines_due_today || ''}
+                    onChange={(e) => handleRecordFieldChange('vaccines_due_today', e.target.value)}
+                    placeholder="e.g. Pentavalent-1, OPV-1, Rotavirus-1"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  />
+                </div>
+
+                {/* 5. Vaccines Given Today */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('vaccines_given_today') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="5. Vaccines Given Today" fieldKey="vaccines_given_today" />
+                  <input
+                    type="text"
+                    value={visitRecord.vaccines_given_today || ''}
+                    onChange={(e) => handleRecordFieldChange('vaccines_given_today', e.target.value)}
+                    placeholder="e.g. Pentavalent-1, OPV-1, Rotavirus-1"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  />
+                </div>
+
+                {/* 6. Missed Vaccination Doses */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('missed_vaccination_doses') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="6. Missed Vaccination Doses" fieldKey="missed_vaccination_doses" />
+                  <input
+                    type="text"
+                    value={visitRecord.missed_vaccination_doses || ''}
+                    onChange={(e) => handleRecordFieldChange('missed_vaccination_doses', e.target.value)}
+                    placeholder="e.g. None or BCG overdue"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  />
+                </div>
+
+                {/* 7. Previous AEFI */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('previous_aefi') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="7. Previous AEFI" fieldKey="previous_aefi" />
+                  <select
+                    value={visitRecord.previous_aefi || ''}
+                    onChange={(e) => handleRecordFieldChange('previous_aefi', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  >
+                    <option value="">Select status</option>
+                    <option value="None">None (No Adverse Reaction)</option>
+                    <option value="Mild Fever">Mild Fever only</option>
+                    <option value="Local Swelling">Local Swelling / Redness</option>
+                    <option value="Severe Reaction">Severe Reaction / Anaphylaxis</option>
+                  </select>
+                </div>
+
+                {/* 8. Next Vaccination Due Date */}
+                <div className={`p-3 rounded-xl border ${missingFields.includes('next_vaccination_due_date') ? 'bg-amber-50/50 border-amber-300' : 'bg-gray-50/50 border-gray-200'}`}>
+                  <FieldHeader label="8. Next Vaccination Due Date" fieldKey="next_vaccination_due_date" />
+                  <input
+                    type="date"
+                    value={visitRecord.next_vaccination_due_date || visitRecord.next_visit_date || ''}
+                    onChange={(e) => {
+                      handleRecordFieldChange('next_vaccination_due_date', e.target.value)
+                      handleRecordFieldChange('next_visit_date', e.target.value)
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  />
+                </div>
+
+                {/* Visit Date */}
+                <div className="p-3 rounded-xl border bg-gray-50/50 border-gray-200">
+                  <FieldHeader label="Visit Date" fieldKey="visit_date" />
+                  <input
+                    type="date"
+                    value={visitRecord.visit_date || ''}
+                    onChange={(e) => handleRecordFieldChange('visit_date', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:border-green-600"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Action buttons */}
+          <div className="flex items-center justify-between pt-4 border-t border-gray-100">
+            <button
+              onClick={() => setStage('clinical')}
+              className="px-4 py-2 border border-gray-200 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-50 transition"
+            >
+              Re-speak Full Clinical Data
+            </button>
+            <button
+              onClick={handleConfirmSave}
+              disabled={saving}
+              className="px-6 py-2.5 bg-green-700 text-white rounded-xl text-sm font-semibold hover:bg-green-800 disabled:opacity-50 flex items-center gap-2 shadow-sm transition"
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Saving Revisit Record...
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  Confirm & Save Revisit
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────────── */}
+      {/* STAGE 5: Saved Successfully */}
+      {/* ─────────────────────────────────────────────────────────────────── */}
+      {stage === 'saved' && (
+        <div className="p-6 bg-green-50 border-2 border-green-500 rounded-2xl shadow-sm space-y-4">
+          <div className="flex items-center gap-3 text-green-800">
+            <CheckCircle2 className="w-8 h-8 text-green-600" />
+            <div>
+              <h2 className="text-lg font-bold">Revisit Successfully Recorded!</h2>
+              <p className="text-sm text-green-700">
+                The visit record has been appended to MongoDB visits collection and patient dates synchronized.
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-white p-4 rounded-xl border border-green-200 grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+            <div>
+              <span className="text-xs text-gray-500 block">Beneficiary</span>
+              <span className="font-bold text-gray-900">{verifiedBeneficiary?.name}</span>
+            </div>
+            <div>
+              <span className="text-xs text-gray-500 block">Beneficiary ID</span>
+              <span className="font-bold text-green-800">{verifiedBeneficiary?.beneficiary_id}</span>
+            </div>
+            <div>
+              <span className="text-xs text-gray-500 block">Visit ID</span>
+              <span className="text-xs font-mono text-gray-600 truncate block">{savedVisitId}</span>
+            </div>
+            <div>
+              <span className="text-xs text-gray-500 block">Next Visit</span>
+              <span className="font-semibold text-gray-800">
+                {visitRecord?.next_visit_date || visitRecord?.next_vaccination_due_date || 'Not scheduled'}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={resetAll}
+              className="px-4 py-2 bg-green-700 text-white rounded-xl text-sm font-semibold hover:bg-green-800 transition"
+            >
+              Record Another Revisit
+            </button>
+            <Link
+              to="/visits"
+              className="px-4 py-2 border border-green-300 text-green-800 rounded-xl text-sm font-semibold hover:bg-green-100 flex items-center gap-1 transition"
+            >
+              <span>View Visit History</span>
+              <ArrowRight className="w-4 h-4" />
+            </Link>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

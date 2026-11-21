@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Users, Calendar, AlertTriangle, CheckCircle2, Mic, TrendingUp, Clock } from 'lucide-react'
+import { Users, Calendar, AlertTriangle, CheckCircle2, Mic, TrendingUp, Clock, UserPlus, Stethoscope } from 'lucide-react'
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { analyticsAPI } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
@@ -61,10 +61,20 @@ export default function DashboardPage() {
           <h2 className="text-2xl font-bold text-gray-900">Welcome, {user?.name?.split(' ')[0]} 👋</h2>
           <p className="text-gray-500 text-sm mt-1">{today}</p>
         </div>
-        <Link to="/voice" className="flex items-center gap-2 px-5 py-3 bg-green-700 text-white rounded-xl font-semibold hover:bg-green-800 transition-colors shadow-md">
-          <Mic className="w-5 h-5" />
-          New Voice Entry
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link to="/register" className="flex items-center gap-2 px-4 py-2.5 bg-green-700 text-white rounded-xl font-semibold hover:bg-green-800 transition-colors shadow-sm text-sm">
+            <UserPlus className="w-4 h-4" />
+            New Beneficiary
+          </Link>
+          <Link to="/revisit" className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white rounded-xl font-semibold hover:bg-emerald-700 transition-colors shadow-sm text-sm">
+            <Stethoscope className="w-4 h-4" />
+            Patient Revisit
+          </Link>
+          <Link to="/voice" className="flex items-center gap-2 px-4 py-2.5 bg-white border border-green-300 text-green-800 rounded-xl font-semibold hover:bg-green-50 transition-colors shadow-sm text-sm">
+            <Mic className="w-4 h-4" />
+            Voice Visit
+          </Link>
+        </div>
       </div>
 
       {/* Stats */}
